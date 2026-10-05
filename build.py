@@ -1,0 +1,354 @@
+import hashlib
+import json
+import os
+import struct
+import sys
+import zlib
+import shutil
+import datetime
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(ROOT, 'app', 'src')
+APP = os.path.join(ROOT, 'app')
+SITE = os.path.join(ROOT, 'docs')                 # dossier déployé par GitHub Pages
+OUT_SINGLE = os.path.join(ROOT, 'CR-Intervention-SAV.html')   # fichier unique (téléphone)
+
+
+# --------------------------------------------------------------------------
+# Icônes PNG générées sans dépendance : fond bleu arrondi + coche blanche
+# --------------------------------------------------------------------------
+def png_icon(size):
+    bleu, bleu2 = (51, 46, 114), (31, 28, 69)
+    blanc = (255, 255, 255)
+    r = size * 0.22
+
+    def seg_dist(px, py, ax, ay, bx, by):
+        vx, vy = bx - ax, by - ay
+        wx, wy = px - ax, py - ay
+        t = 0.0
+        if vx * vx + vy * vy > 0:
+            t = max(0.0, min(1.0, (wx * vx + wy * vy) / (vx * vx + vy * vy)))
+        dx, dy = wx - t * vx, wy - t * vy
+        return (dx * dx + dy * dy) ** 0.5
+
+    A = (size * 0.24, size * 0.52)
+    B = (size * 0.43, size * 0.71)
+    C = (size * 0.77, size * 0.30)
+    ep = size * 0.072
+    rows = []
+    for y in range(size):
+        row = bytearray([0])
+        for x in range(size):
+            cx, cy = x + 0.5, y + 0.5
+            dx, dy = min(cx, size - cx), min(cy, size - cy)
+            dedans = True
+            if dx < r and dy < r:
+                dedans = ((r - dx) ** 2 + (r - dy) ** 2) ** 0.5 <= r
+            if not dedans:
+                row += bytes((0, 0, 0, 0))
+                continue
+            t = (cx + cy) / (2 * size)
+            col = tuple(int(bleu[i] + (bleu2[i] - bleu[i]) * t) for i in range(3))
+            d = min(seg_dist(cx, cy, A[0], A[1], B[0], B[1]), seg_dist(cx, cy, B[0], B[1], C[0], C[1]))
+            if d < ep:
+                a = 1.0 if d < ep - 1 else max(0.0, (ep - d))
+                col = tuple(int(col[i] + (blanc[i] - col[i]) * a) for i in range(3))
+            row += bytes(col + (255,))
+        rows.append(bytes(row))
+    raw = b''.join(rows)
+
+    def chunk(tag, data):
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    ihdr = struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) +
+            chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))
+
+
+def ecrire_icones(dossier):
+    os.makedirs(dossier, exist_ok=True)
+    icons_src = os.path.join(ROOT, 'app', 'icons')
+    if os.path.isdir(icons_src) and any(f.endswith('.png') for f in os.listdir(icons_src)):
+        for f in os.listdir(icons_src):
+            if f.endswith('.png'):
+                shutil.copy2(os.path.join(icons_src, f), os.path.join(dossier, f))
+    else:
+        for nom, taille in {'icon-opt1-192.png': 192, 'icon-opt1-512.png': 512,
+                            'apple-touch-icon.png': 180, 'favicon.png': 64}.items():
+            with open(os.path.join(dossier, nom), 'wb') as f:
+                f.write(png_icon(taille))
+
+
+# --------------------------------------------------------------------------
+# Assemblage du fichier unique
+# --------------------------------------------------------------------------
+def lire(p):
+    with open(p, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
+# Liste clients : embarquée si le fichier app/src/clients-data.js est présent.
+# Il n'est volontairement PAS dans le dépôt public (données clients) : sans lui, le build
+# se fait automatiquement sans liste (chaque technicien l'importe sur son téléphone).
+SANS_LISTE = ('--sans-liste' in sys.argv) or not os.path.isfile(os.path.join(SRC, 'clients-data.js'))
+
+
+def construire_single_file(avec_pwa):
+    html = lire(os.path.join(APP, 'index.html'))
+    clients_data = ('' if SANS_LISTE else lire(os.path.join(SRC, 'clients-data.js')) + '\n')
+    contenu = {
+        'CSS': lire(os.path.join(SRC, 'style.css')),
+        'LANGUES': lire(os.path.join(SRC, 'langues.js')),
+        'CORRECTEUR': lire(os.path.join(SRC, 'correcteur-fr.js')),
+        'GLOSSAIRE': lire(os.path.join(SRC, 'glossaire-bfr.js')),
+        'BERGAMOT': lire(os.path.join(SRC, 'bergamot-engine.js')),
+        'TRADUCTION': lire(os.path.join(SRC, 'traduction.js')),
+        'PDF': lire(os.path.join(SRC, 'pdf.js')),
+        'DOCX': lire(os.path.join(SRC, 'docx.js')),
+        'REPORT': lire(os.path.join(SRC, 'report.js')),
+        'ANNOT': lire(os.path.join(SRC, 'annotate.js')),
+        'ICONS': lire(os.path.join(SRC, 'icons.js')),
+        'WIZARD': lire(os.path.join(SRC, 'wizard.js')),
+        'LOGO': lire(os.path.join(SRC, 'logo-bfr.js')),
+        'ICONES_DATA': lire(os.path.join(SRC, 'icones-data.js')),
+        'CLIENTS': clients_data + lire(os.path.join(SRC, 'clients.js')),
+        'APP': lire(os.path.join(SRC, 'app.js')),
+    }
+    for bloc, code in contenu.items():
+        motif = '/*<!--%s-->*/' % bloc
+        if motif not in html:
+            raise SystemExit('Motif manquant dans app/index.html : %s' % motif)
+        if '</script>' in code or '</style>' in code:
+            raise SystemExit('Contenu incompatible avec l\'inlining : %s' % bloc)
+        html = html.replace(motif, code)
+    if avec_pwa:
+        html = html.replace(
+            '<meta name="description"',
+            '<link rel="manifest" href="manifest.json">\n'
+            '<link rel="icon" href="favicon.png">\n'
+            '<link rel="apple-touch-icon" href="apple-touch-icon.png">\n'
+            '<meta name="description"')
+    return html
+
+
+SW = """/* Service worker — application hors connexion.
+   Stratégie : RÉSEAU D'ABORD (la nouvelle version est prise dès la prochaine
+   ouverture avec du réseau), puis cache (usage hors connexion). Si le réseau
+   met plus de 3,5 s à répondre, le cache est servi sans attendre — le réseau
+   met le cache à jour en arrière-plan.
+   Le nom du cache contient l'empreinte du build : chaque publication remplace
+   la précédente et vide les anciens caches. */
+const CACHE = 'bfr-fiche-sav-__VERSION__';
+const FICHIERS = [
+  './', './index.html',
+  './manifest.json', './manifest-opt1.json', './manifest-opt2.json', './manifest-opt3.json',
+  './favicon.png', './apple-touch-icon.png',
+  './icon-opt1-192.png', './icon-opt1-512.png',
+  './icon-opt2-192.png', './icon-opt2-512.png',
+  './icon-opt3-192.png', './icon-opt3-512.png'
+];
+const DELAI_RESEAU = 3500;
+
+const delai = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+function servir(requete, estPage) {
+  const optionsFetch = (estPage || requete.url.includes('manifest')) ? { cache: 'no-cache' } : {};
+  const reseau = fetch(requete, optionsFetch).then((rep) => {
+    if (rep && rep.ok) {
+      const copie = rep.clone();
+      caches.open(CACHE).then((c) => c.put(requete, copie)).catch(() => {});
+    }
+    return rep && rep.ok ? rep : null;
+  }).catch(() => null);
+
+  return Promise.race([reseau, delai(DELAI_RESEAU)]).then((vite) =>
+    vite || caches.match(requete)
+      .then((c) => c || (estPage ? caches.match('./') : null))
+      .then((c) => c || reseau)
+      .then((c) => c || new Response('Hors connexion', { status: 503 }))
+  );
+}
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FICHIERS)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((noms) => Promise.all(noms.filter((n) => n !== CACHE).map((n) => caches.delete(n))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }).then((clients) => {
+        clients.forEach((c) => c.postMessage({ type: 'NOUVELLE_VERSION', version: '__VERSION__' }));
+      }))
+  );
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.action === 'skipWaiting') {
+    self.skipWaiting();
+  } else if (e.data && e.data.action === 'viderCache') {
+    e.waitUntil(
+      caches.keys().then((noms) => Promise.all(noms.map((n) => caches.delete(n))))
+        .then(() => self.clients.claim())
+    );
+  } else if (e.data && e.data.action === 'changerIcone') {
+    e.waitUntil(
+      caches.open(CACHE).then(async (c) => {
+        const cles = await c.keys();
+        await Promise.all(
+          cles.filter(req => req.url.includes('manifest') || req.url.includes('icon')).map(req => c.delete(req))
+        );
+      })
+    );
+  }
+});
+
+/* Polices Google (Open Sans, Poppins) : mises en cache à la première ouverture avec
+   réseau, puis servies depuis le cache — l'interface garde ses polices hors connexion. */
+const ORIGINES_POLICES = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'];
+function servirPolice(requete) {
+  return caches.open(CACHE).then((c) => c.match(requete).then((enCache) => {
+    const reseau = fetch(requete).then((rep) => {
+      if (rep && (rep.ok || rep.type === 'opaque')) c.put(requete, rep.clone()).catch(() => {});
+      return rep;
+    }).catch(() => null);
+    return enCache || reseau.then((rep) => rep || new Response('', { status: 504 }));
+  }));
+}
+
+self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return;
+  const origine = new URL(e.request.url).origin;
+  if (ORIGINES_POLICES.indexOf(origine) !== -1) { e.respondWith(servirPolice(e.request)); return; }
+  if (origine !== self.location.origin) return;
+  e.respondWith(servir(e.request, e.request.mode === 'navigate'));
+});
+"""
+
+MANIFESTS = {
+    'manifest.json': {
+        "id": "bfr-sav-v3-bleu-petrole",
+        "name": "BFR SAV — Compte rendu d'intervention",
+        "short_name": "BFR SAV",
+        "description": "Saisie, signature du client et envoi des comptes rendus d'intervention SAV BFR Systems. Fonctionne hors connexion.",
+        "lang": "fr",
+        "start_url": "./",
+        "scope": "./",
+        "display": "standalone",
+        "orientation": "portrait",
+        "background_color": "#ffffff",
+        "theme_color": "#332e72",
+        "icons": [
+            {"src": "icon-opt1-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt1-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt1-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        ]
+    },
+    'manifest-opt1.json': {
+        "id": "bfr-sav-v3-bleu-petrole",
+        "name": "BFR SAV — Compte rendu d'intervention",
+        "short_name": "BFR SAV",
+        "description": "Saisie, signature du client et envoi des comptes rendus d'intervention SAV BFR Systems. Fonctionne hors connexion.",
+        "lang": "fr",
+        "start_url": "./?icone=opt1",
+        "scope": "./",
+        "display": "standalone",
+        "orientation": "portrait",
+        "background_color": "#ffffff",
+        "theme_color": "#332e72",
+        "icons": [
+            {"src": "icon-opt1-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt1-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt1-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        ]
+    },
+    'manifest-opt2.json': {
+        "id": "bfr-sav-v2-blanc-glace",
+        "name": "BFR SAV — Compte rendu d'intervention",
+        "short_name": "BFR SAV",
+        "description": "Saisie, signature du client et envoi des comptes rendus d'intervention SAV BFR Systems. Fonctionne hors connexion.",
+        "lang": "fr",
+        "start_url": "./?icone=opt2",
+        "scope": "./",
+        "display": "standalone",
+        "orientation": "portrait",
+        "background_color": "#ffffff",
+        "theme_color": "#332e72",
+        "icons": [
+            {"src": "icon-opt2-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt2-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt2-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        ]
+    },
+    'manifest-opt3.json': {
+        "id": "bfr-sav-v1-cyan-clair",
+        "name": "BFR SAV — Compte rendu d'intervention",
+        "short_name": "BFR SAV",
+        "description": "Saisie, signature du client et envoi des comptes rendus d'intervention SAV BFR Systems. Fonctionne hors connexion.",
+        "lang": "fr",
+        "start_url": "./?icone=opt3",
+        "scope": "./",
+        "display": "standalone",
+        "orientation": "portrait",
+        "background_color": "#ffffff",
+        "theme_color": "#332e72",
+        "icons": [
+            {"src": "icon-opt3-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt3-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "icon-opt3-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        ]
+    }
+}
+
+
+def injecter_version(html, version, date_build=None):
+    """Inscrit le n° de version et la date du build dans la page (☰ → Mode d'emploi) : sur le
+    téléphone, on voit d'un coup d'œil quelle version tourne réellement."""
+    if not date_build:
+        date_build = datetime.date.today().strftime('%d/%m/%Y')
+    balise = '<script>window.SAV_VERSION="%s";window.SAV_DATE="%s";</script></body>' % (version, date_build)
+    if html.count('</body>') != 1:
+        raise SystemExit('Balise </body> attendue une seule fois dans app/index.html')
+    return html.replace('</body>', balise)
+
+
+def main():
+    # Version = empreinte du code : elle change à chaque modification réelle,
+    # ce qui vide le cache du téléphone et lui livre la nouvelle version.
+    version = hashlib.sha256(construire_single_file(avec_pwa=True).encode('utf-8')).hexdigest()[:10]
+    date_build = datetime.date.today().strftime('%d/%m/%Y')
+
+    # 1) fichier unique (livrable terrain : un seul fichier à ouvrir dans Chrome)
+    with open(OUT_SINGLE, 'w', encoding='utf-8') as f:
+        f.write(injecter_version(construire_single_file(avec_pwa=False), version, date_build))
+
+    # 2) site déployable (GitHub Pages : docs/)
+    os.makedirs(SITE, exist_ok=True)
+    html_pwa = injecter_version(construire_single_file(avec_pwa=True), version, date_build)
+    # docs/ est le SEUL dossier publié (plus de copie à la racine du dépôt)
+    with open(os.path.join(SITE, 'index.html'), 'w', encoding='utf-8') as f:
+        f.write(html_pwa)
+
+    ecrire_icones(SITE)
+
+    sw_code = SW.replace('__VERSION__', version)
+    with open(os.path.join(SITE, 'sw.js'), 'w', encoding='utf-8') as f:
+        f.write(sw_code)
+
+    for fname, mdata in MANIFESTS.items():
+        with open(os.path.join(SITE, fname), 'w', encoding='utf-8') as f:
+            json.dump(mdata, f, ensure_ascii=False, indent=2)
+
+    # fichier .nojekyll : GitHub Pages ne doit pas filtrer les fichiers
+    open(os.path.join(SITE, '.nojekyll'), 'w').close()
+
+    for p in (OUT_SINGLE, os.path.join(SITE, 'index.html')):
+        print('%-46s %8.0f Ko' % (os.path.relpath(p, ROOT), os.path.getsize(p) / 1024))
+    if SANS_LISTE:
+        print('Liste clients NON embarquée : à charger dans ☰ → Réglages → Liste clients.')
+    print('version du build : ' + version)
+    print('docs/ : ' + ' '.join(sorted(os.listdir(SITE))))
+
+
+if __name__ == '__main__':
+    main()
