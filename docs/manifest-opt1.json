@@ -1,0 +1,33 @@
+{
+  "id": "bfr-sav-v3-bleu-petrole",
+  "name": "BFR SAV — Compte rendu d'intervention",
+  "short_name": "BFR SAV",
+  "description": "Saisie, signature du client et envoi des comptes rendus d'intervention SAV BFR Systems. Fonctionne hors connexion.",
+  "lang": "fr",
+  "start_url": "./?icone=opt1",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#332e72",
+  "icons": [
+    {
+      "src": "icon-opt1-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-opt1-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-opt1-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+/* Service worker — application hors connexion.
+   Stratégie : RÉSEAU D'ABORD (la nouvelle version est prise dès la prochaine
+   ouverture avec du réseau), puis cache (usage hors connexion). Si le réseau
+   met plus de 3,5 s à répondre, le cache est servi sans attendre — le réseau
+   met le cache à jour en arrière-plan.
+   Le nom du cache contient l'empreinte du build : chaque publication remplace
+   la précédente et vide les anciens caches. */
+const CACHE = 'bfr-fiche-sav-971fd7e235';
+const FICHIERS = [
+  './', './index.html',
+  './manifest.json', './manifest-opt1.json', './manifest-opt2.json', './manifest-opt3.json',
+  './favicon.png', './apple-touch-icon.png',
+  './icon-opt1-192.png', './icon-opt1-512.png',
+  './icon-opt2-192.png', './icon-opt2-512.png',
+  './icon-opt3-192.png', './icon-opt3-512.png'
+];
+const DELAI_RESEAU = 3500;
+
+const delai = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+function servir(requete, estPage) {
+  const optionsFetch = (estPage || requete.url.includes('manifest')) ? { cache: 'no-cache' } : {};
+  const reseau = fetch(requete, optionsFetch).then((rep) => {
+    if (rep && rep.ok) {
+      const copie = rep.clone();
+      caches.open(CACHE).then((c) => c.put(requete, copie)).catch(() => {});
+    }
+    return rep && rep.ok ? rep : null;
+  }).catch(() => null);
+
+  return Promise.race([reseau, delai(DELAI_RESEAU)]).then((vite) =>
+    vite || caches.match(requete)
+      .then((c) => c || (estPage ? caches.match('./') : null))
+      .then((c) => c || reseau)
+      .then((c) => c || new Response('Hors connexion', { status: 503 }))
+  );
+}
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FICHIERS)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((noms) => Promise.all(noms.filter((n) => n !== CACHE).map((n) => caches.delete(n))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }).then((clients) => {
+        clients.forEach((c) => c.postMessage({ type: 'NOUVELLE_VERSION', version: '971fd7e235' }));
+      }))
+  );
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.action === 'skipWaiting') {
+    self.skipWaiting();
+  } else if (e.data && e.data.action === 'viderCache') {
+    e.waitUntil(
+      caches.keys().then((noms) => Promise.all(noms.map((n) => caches.delete(n))))
+        .then(() => self.clients.claim())
+    );
+  } else if (e.data && e.data.action === 'changerIcone') {
+    e.waitUntil(
+      caches.open(CACHE).then(async (c) => {
+        const cles = await c.keys();
+        await Promise.all(
+          cles.filter(req => req.url.includes('manifest') || req.url.includes('icon')).map(req => c.delete(req))
+        );
+      })
+    );
+  }
+});
+
+/* Polices Google (Open Sans, Poppins) : mises en cache à la première ouverture avec
+   réseau, puis servies depuis le cache — l'interface garde ses polices hors connexion. */
+const ORIGINES_POLICES = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'];
+function servirPolice(requete) {
+  return caches.open(CACHE).then((c) => c.match(requete).then((enCache) => {
+    const reseau = fetch(requete).then((rep) => {
+      if (rep && (rep.ok || rep.type === 'opaque')) c.put(requete, rep.clone()).catch(() => {});
+      return rep;
+    }).catch(() => null);
+    return enCache || reseau.then((rep) => rep || new Response('', { status: 504 }));
+  }));
+}
+
+self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET') return;
+  const origine = new URL(e.request.url).origin;
+  if (ORIGINES_POLICES.indexOf(origine) !== -1) { e.respondWith(servirPolice(e.request)); return; }
+  if (origine !== self.location.origin) return;
+  e.respondWith(servir(e.request, e.request.mode === 'navigate'));
+});
