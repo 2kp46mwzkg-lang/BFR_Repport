@@ -1,3 +1,19 @@
+# Fusion avec la version de Bertrand du 06/10/2026
+
+Reprises telles quelles depuis le dépôt de Bertrand (4 envois du 05 et 06/10) :
+- **Annuaire clients** (Menu → Annuaire clients, et bouton « Annuaire complet » dans la fiche
+  client) : consulter, créer, modifier ou réinitialiser une fiche client hors intervention.
+- **SMS d'arrivée sur site** : message pré-rempli (FR/EN/DE/NL) au contact du client, ouvert
+  dans l'application SMS du téléphone.
+- **Pièces de rechange rattachées à une machine** (N° de série en priorité) : nouvelle colonne
+  « Machine (N° série) » dans l'écran, le PDF et le Word.
+- Choix d'un client dans la liste : les coordonnées de l'ancien client ne restent plus.
+- Aperçu du logo client mis à jour immédiatement.
+- Assistant d'évènement : machines affichées avec leur N° de série.
+
+Toutes nos corrections du 05/10 (ci-dessous) sont conservées. Fichiers générés (docs/,
+CR-Intervention-SAV.html) reconstruits à partir des sources fusionnées.
+
 # Corrections du 05/10/2026
 
 ## Images absentes dans les anciens rapports

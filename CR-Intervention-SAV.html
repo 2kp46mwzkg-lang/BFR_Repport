@@ -2457,6 +2457,14 @@ ul.liste li { margin-bottom: 6px; }
       en: 'Part number', de: 'Artikelnummer', nl: 'Referentie',
       es: 'Referencia', it: 'Codice', pt: 'Referência'
     },
+    'Machine (N° série)': {
+      en: 'Machine (Serial No.)', de: 'Maschine (Serien-Nr.)', nl: 'Machine (Serienr.)',
+      es: 'Máquina (N.º serie)', it: 'Macchina (N. serie)', pt: 'Máquina (N.º de série)'
+    },
+    'Machine (N° de série)': {
+      en: 'Machine (Serial No.)', de: 'Maschine (Serien-Nr.)', nl: 'Machine (Serienr.)',
+      es: 'Máquina (N.º serie)', it: 'Macchina (N. serie)', pt: 'Máquina (N.º de série)'
+    },
     'Quantité': {
       en: 'Quantity', de: 'Menge', nl: 'Aantal',
       es: 'Cantidad', it: 'Quantità', pt: 'Quantidade'
@@ -2643,6 +2651,7 @@ ul.liste li { margin-bottom: 6px; }
     'mécanique', 'électrique', 'automatisme', 'sécurité', 'urgent', 'priorité haute',
     'basse', 'informatif', 'catégorie', 'nombre', 'photos', 'date', 'client', 'technicien',
     'machine', 'modèle', 'lieu', 'intervention', 'pièces de rechange', 'dénomination', 'quantité',
+    'machine (n° série)', 'machine (n° de série)',
     'machines visitées', 'machine concernée', 'techniciens sur site', 'technicien(s) sur site',
     'relevé des journées d\'intervention', 'journées d\'intervention', 'total cumulé', 'activité / travaux'
   ];
@@ -5644,6 +5653,45 @@ ul.liste li { margin-bottom: 6px; }
     return [];
   }
 
+  function infoMachinePiece(p, intervention) {
+    if (!p) return { id: '', serie: '', designation: '', libelle: '—', court: '—' };
+    const ms = (intervention && (intervention.machines || [])) || [];
+    let m = null;
+    if (p.machineId) {
+      m = ms.find(x => x && x.id === p.machineId);
+    }
+    if (!m && p.machineSerie) {
+      m = ms.find(x => x && x.serie === p.machineSerie);
+    }
+    if (!m && p.machineNom) {
+      m = ms.find(x => x && (x.designation === p.machineNom || x.modele === p.machineNom));
+    }
+    if (!m && intervention && intervention.machine) {
+      if (p.machineSerie && intervention.machine.serie === p.machineSerie) {
+        m = intervention.machine;
+      } else if (p.machineNom && (intervention.machine.designation === p.machineNom || intervention.machine.modele === p.machineNom)) {
+        m = intervention.machine;
+      }
+    }
+    const serie = ((m && m.serie) ? m.serie : (p.machineSerie || '')).trim();
+    const nom = ((m && (m.designation || m.modele)) ? (m.designation || m.modele) : (p.machineNom || '')).trim();
+    const id = (m && m.id) || p.machineId || '';
+
+    let libelle = '—';
+    let court = '—';
+    if (serie && nom) {
+      libelle = 'N° de série : ' + serie + ' — ' + nom;
+      court = 'N° ' + serie + ' (' + nom + ')';
+    } else if (serie) {
+      libelle = 'N° de série : ' + serie;
+      court = 'N° ' + serie;
+    } else if (nom) {
+      libelle = nom;
+      court = nom;
+    }
+    return { id: id, serie: serie, designation: nom, libelle: libelle, court: court };
+  }
+
   function listeTechniciens(i, s) {
     if (i && Array.isArray(i.techniciens) && i.techniciens.length > 0) {
       const valides = i.techniciens.filter(t => t && valeur(t.nom));
@@ -6303,11 +6351,13 @@ ul.liste li { margin-bottom: 6px; }
       const p = this.pdf, C = this.C;
       if (!pcs || !pcs.length) return;
       const avecPhotos = pcs.some(it => it && it.photo);
-      const colPhotoW = avecPhotos ? 46 : 0;
-      const colDenomW = avecPhotos ? (this.CW - colPhotoW) * 0.52 : (this.CW * 0.54);
-      const colRefW = avecPhotos ? (this.CW - colPhotoW) * 0.32 : (this.CW * 0.30);
-      const colQteW = avecPhotos ? (this.CW - colPhotoW) * 0.16 : (this.CW * 0.16);
-      const hLigne = avecPhotos ? 46 : 20;
+      const colPhotoW = avecPhotos ? 44 : 0;
+      const remW = this.CW - colPhotoW;
+      const colDenomW = avecPhotos ? Math.round(remW * 0.35) : Math.round(this.CW * 0.36);
+      const colRefW = avecPhotos ? Math.round(remW * 0.22) : Math.round(this.CW * 0.22);
+      const colMachW = avecPhotos ? Math.round(remW * 0.30) : Math.round(this.CW * 0.28);
+      const colQteW = remW - (colDenomW + colRefW + colMachW);
+      const hLigne = avecPhotos ? 46 : 22;
       const hEntete = 20;
 
       this.saut(hEntete + hLigne * Math.min(pcs.length, 3) + 24);
@@ -6327,6 +6377,9 @@ ul.liste li { margin-bottom: 6px; }
         p.text(this.L('Référence'), curX + 7, y + 13.5, { size: 9.4, font: 'F2', color: C.bleu });
         p.line(curX + colRefW, y, curX + colRefW, y + hEntete, { color: C.bordFort, width: 0.6 });
         curX += colRefW;
+        p.text(this.L('Machine (N° série)'), curX + 7, y + 13.5, { size: 9.4, font: 'F2', color: C.bleu });
+        p.line(curX + colMachW, y, curX + colMachW, y + hEntete, { color: C.bordFort, width: 0.6 });
+        curX += colMachW;
         p.text(this.L('Quantité'), curX + colQteW / 2, y + 13.5, { size: 9.4, font: 'F2', color: C.bleu, align: 'center' });
         y += hEntete;
       };
@@ -6378,7 +6431,8 @@ ul.liste li { margin-bottom: 6px; }
         const denom = valeur(item.denomination || item.designation) || '—';
         const ref = valeur(item.reference) || '—';
         const qte = String(valeur(item.quantite) || 1);
-        const textY = avecPhotos ? (y + hLigne / 2 + 3.5) : (y + 13.5);
+        const machInfo = infoMachinePiece(item, this.i);
+        const textY = avecPhotos ? (y + hLigne / 2 + 3.5) : (y + 14.5);
 
         p.text(Pdf.trunc(denom, colDenomW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: C.texte });
         p.line(rowX + colDenomW, y, rowX + colDenomW, y + hLigne, { color: C.bord, width: 0.4 });
@@ -6387,6 +6441,21 @@ ul.liste li { margin-bottom: 6px; }
         p.text(Pdf.trunc(ref, colRefW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, font: 'F2', color: C.texte });
         p.line(rowX + colRefW, y, rowX + colRefW, y + hLigne, { color: C.bord, width: 0.4 });
         rowX += colRefW;
+
+        if (avecPhotos) {
+          if (machInfo.serie) {
+            p.text(Pdf.trunc('N° ' + machInfo.serie, colMachW - 14, 9.4, false), rowX + 7, y + 18, { size: 9.4, font: 'F2', color: C.bleu });
+            if (machInfo.designation) {
+              p.text(Pdf.trunc(machInfo.designation, colMachW - 14, 8.5, false), rowX + 7, y + 31, { size: 8.5, color: C.texte });
+            }
+          } else {
+            p.text(Pdf.trunc(machInfo.designation || '—', colMachW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: machInfo.designation ? C.texte : C.gris });
+          }
+        } else {
+          p.text(Pdf.trunc(machInfo.libelle || '—', colMachW - 14, 9.2, false), rowX + 7, textY, { size: 9.2, color: (machInfo.libelle && machInfo.libelle !== '—') ? C.texte : C.gris });
+        }
+        p.line(rowX + colMachW, y, rowX + colMachW, y + hLigne, { color: C.bord, width: 0.4 });
+        rowX += colMachW;
 
         p.text(qte, rowX + colQteW / 2, textY, { size: 9.4, font: 'F2', color: C.texte, align: 'center' });
 
@@ -7041,28 +7110,33 @@ ul.liste li { margin-bottom: 6px; }
             { texte: this.L('Photo'), gras: true, align: 'center', fond: 'E8EFFA' },
             { texte: this.L('Dénomination'), gras: true, fond: 'E8EFFA' },
             { texte: this.L('Référence'), gras: true, fond: 'E8EFFA' },
+            { texte: this.L('Machine (N° série)'), gras: true, fond: 'E8EFFA' },
             { texte: this.L('Quantité'), gras: true, align: 'center', fond: 'E8EFFA' }
           ] : [
             { texte: this.L('Dénomination'), gras: true, fond: 'E8EFFA' },
             { texte: this.L('Référence'), gras: true, fond: 'E8EFFA' },
+            { texte: this.L('Machine (N° série)'), gras: true, fond: 'E8EFFA' },
             { texte: this.L('Quantité'), gras: true, align: 'center', fond: 'E8EFFA' }
           ];
           const lignesTab = pcs.map(p => {
+            const machInfo = infoMachinePiece(p, i);
             if (avecPhotos) {
               return [
                 p.photo ? { image: p.photo, imageCm: 1.5, align: 'center' } : { texte: '—', align: 'center' },
                 { texte: p.denomination || p.designation || '—' },
                 { texte: p.reference || '—' },
+                { texte: machInfo.libelle || '—' },
                 { texte: String(p.quantite || 1), align: 'center' }
               ];
             }
             return [
               { texte: p.denomination || p.designation || '—' },
               { texte: p.reference || '—' },
+              { texte: machInfo.libelle || '—' },
               { texte: String(p.quantite || 1), align: 'center' }
             ];
           });
-          d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [16, 44, 26, 14] : [55, 30, 15] });
+          d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [14, 32, 22, 22, 10] : [36, 24, 28, 12] });
           d.para(this.L('La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.'), { taille: 9.5, couleur: '64748B', apres: 120 });
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'photos') {
@@ -7083,28 +7157,33 @@ ul.liste li { margin-bottom: 6px; }
                 { texte: this.L('Photo'), gras: true, align: 'center', fond: 'E8EFFA' },
                 { texte: this.L('Dénomination'), gras: true, fond: 'E8EFFA' },
                 { texte: this.L('Référence'), gras: true, fond: 'E8EFFA' },
+                { texte: this.L('Machine (N° série)'), gras: true, fond: 'E8EFFA' },
                 { texte: this.L('Quantité'), gras: true, align: 'center', fond: 'E8EFFA' }
               ] : [
                 { texte: this.L('Dénomination'), gras: true, fond: 'E8EFFA' },
                 { texte: this.L('Référence'), gras: true, fond: 'E8EFFA' },
+                { texte: this.L('Machine (N° série)'), gras: true, fond: 'E8EFFA' },
                 { texte: this.L('Quantité'), gras: true, align: 'center', fond: 'E8EFFA' }
               ];
               const lignesTab = pcs.map(p => {
+                const machInfo = infoMachinePiece(p, i);
                 if (avecPhotos) {
                   return [
                     p.photo ? { image: p.photo, imageCm: 1.5, align: 'center' } : { texte: '—', align: 'center' },
                     { texte: p.denomination || p.designation || '—' },
                     { texte: p.reference || '—' },
+                    { texte: machInfo.libelle || '—' },
                     { texte: String(p.quantite || 1), align: 'center' }
                   ];
                 }
                 return [
                   { texte: p.denomination || p.designation || '—' },
                   { texte: p.reference || '—' },
+                  { texte: machInfo.libelle || '—' },
                   { texte: String(p.quantite || 1), align: 'center' }
                 ];
               });
-              d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [16, 44, 26, 14] : [55, 30, 15] });
+              d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [14, 32, 22, 22, 10] : [36, 24, 28, 12] });
               d.para(this.L('La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.'), { taille: 9.5, couleur: '64748B', apres: 120 });
               piecesRendues = true;
               dernierTypeEtaitEvenement = false;
@@ -7416,6 +7495,46 @@ ul.liste li { margin-bottom: 6px; }
     return corpsCl + '\n\n__________________________________________________\n[Version française / Information SAV BFR]\n\n' + corpsSv;
   }
 
+  /* ---------- SMS d'arrivée sur site pour le contact client ---------- */
+  function texteSMSArrivee(i, s, langue) {
+    const vars = variables(i, s);
+    const techNom = vars.technicien || 'Le technicien SAV';
+    const techTel = (s && s.technicien && s.technicien.tel) ? s.technicien.tel.trim() : '';
+    const contact = (i && i.client && i.client.contact) ? i.client.contact.trim() : '';
+    const site = (i && i.client && (i.client.lieu || i.client.nom)) ? (i.client.lieu || i.client.nom).trim() : '';
+    const mach = (i && i.machine && i.machine.designation) ? i.machine.designation.trim() : '';
+    const lang = (langue || (i && i.langue && i.langue.active && i.langue.code) || 'fr').toLowerCase();
+
+    if (lang === 'en') {
+      const salutation = contact ? ('Hello ' + contact + ',') : 'Hello,';
+      const precisionMach = mach ? (' for the service intervention on ' + mach) : ' for the service intervention';
+      const precisionSite = site ? (' at ' + site) : '';
+      const joignable = techTel ? ('\nYou can reach me at ' + techTel + '.') : '';
+      return `${salutation}\n${techNom} from BFR Systems.\nI have arrived on site${precisionSite}${precisionMach}.${joignable}\nSee you shortly.`;
+    }
+    if (lang === 'de') {
+      const salutation = contact ? ('Guten Tag ' + contact + ',') : 'Guten Tag,';
+      const precisionMach = mach ? (' an ' + mach) : '';
+      const precisionSite = site ? (' bei ' + site) : '';
+      const joignable = techTel ? ('\nSie erreichen mich unter ' + techTel + '.') : '';
+      return `${salutation}\n${techNom} von BFR Systems.\nIch bin vor Ort eingetroffen${precisionSite} für den SAV-Einsatz${precisionMach}.${joignable}\nBis gleich.`;
+    }
+    if (lang === 'nl') {
+      const salutation = contact ? ('Goedendag ' + contact + ',') : 'Goedendag,';
+      const precisionMach = mach ? (' aan ' + mach) : '';
+      const precisionSite = site ? (' bij ' + site) : '';
+      const joignable = techTel ? ('\nU kunt mij bereiken op ' + techTel + '.') : '';
+      return `${salutation}\n${techNom} van BFR Systems.\nIk ben ter plaatse aangekomen${precisionSite} voor de service-interventie${precisionMach}.${joignable}\nTot zo.`;
+    }
+
+    // Français par défaut
+    const salutation = contact ? ('Bonjour ' + contact + ',') : 'Bonjour,';
+    const precisionMach = mach ? (' sur votre équipement ' + mach) : '';
+    const precisionSite = site ? (' sur votre site (' + site + ')') : ' sur votre site';
+    const joignable = techTel ? ('\nJe reste joignable au ' + techTel + '.') : '';
+    return `${salutation}\n${techNom} de la société BFR Systems.\nJe suis bien arrivé${precisionSite} pour l'intervention SAV${precisionMach}.${joignable}\nÀ tout de suite.`;
+  }
+
   global.Report = {
     /* opts : { langue: 'en', suffixe: true } pour la version traduite. */
     genererPDF: function (i, s, opts) { return new RapportPDF(i, s, opts).generer(); },
@@ -7434,7 +7553,8 @@ ul.liste li { margin-bottom: 6px; }
     objetMail: objetMail, corpsMail: corpsMail, defaultCorpsMail: defaultCorpsMail, variables: variables,
     objetMailClient: objetMailClient, corpsMailClient: corpsMailClient,
     objetMailSAV: objetMailSAV, corpsMailSAV: corpsMailSAV,
-    corpsMailBilingue: corpsMailBilingue,
+    corpsMailBilingue: corpsMailBilingue, texteSMSArrivee: texteSMSArrivee,
+    infoMachinePiece: infoMachinePiece,
     nomComplet: nomComplet, contactTech: contactTech, nomTechnicien: nomTechnicien
   };
 })(window);
@@ -7928,6 +8048,13 @@ ul.liste li { margin-bottom: 6px; }
         sz || 18, cls
       );
     },
+    users: function (sz, cls) {
+      return duo(
+        '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+        '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+        sz || 18, cls
+      );
+    },
     folder: function (sz, cls) {
       return duo(
         '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
@@ -7942,6 +8069,13 @@ ul.liste li { margin-bottom: 6px; }
       return duo(
         '<rect x="2" y="4" width="20" height="16" rx="2"/>',
         '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+        sz || 18, cls
+      );
+    },
+    sms: function (sz, cls) {
+      return duo(
+        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
         sz || 18, cls
       );
     },
@@ -8187,7 +8321,13 @@ ul.liste li { margin-bottom: 6px; }
             <option value="">— Non rattaché / Toute l'installation —</option>
             ${this.machines.map(m => {
               const sel = (ev.machineId && m.id === ev.machineId) || (ev.machineNom && m.designation === ev.machineNom);
-              const label = [m.designation || 'Machine', m.modele ? '(' + m.modele + ')' : ''].filter(Boolean).join(' ');
+              const serie = (m.serie || '').trim();
+              const nom = (m.designation || '').trim();
+              const mod = (m.modele || '').trim();
+              let label = '';
+              if (serie && nom) label = 'N° de série : ' + serie + ' — ' + nom + (mod ? ' (' + mod + ')' : '');
+              else if (serie) label = 'N° de série : ' + serie + (mod ? ' (' + mod + ')' : '');
+              else label = [nom || 'Machine', mod ? '(' + mod + ')' : ''].filter(Boolean).join(' ');
               return `<option value="${esc(m.id || m.designation)}" ${sel ? 'selected' : ''}>${esc(label)}</option>`;
             }).join('')}
           </select>
@@ -8697,14 +8837,18 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       const cle = norm(client.nom);
       const avant = memo[cle] || {};
       const apres = {
-        nom: joli(client.nom), ville: client.lieu || client.ville || avant.ville || '',
-        adresse: client.adresse || avant.adresse || '', contact: client.contact || avant.contact || '',
-        fonction: client.fonction || avant.fonction || '', tel: client.tel || avant.tel || '',
-        email: client.email || avant.email || '', logo: client.logo || avant.logo || '',
-        numeroClient: client.numeroClient || avant.numeroClient || '',
+        nom: joli(client.nom),
+        ville: client.lieu !== undefined ? client.lieu : (client.ville !== undefined ? client.ville : (avant.ville || '')),
+        adresse: client.adresse !== undefined ? client.adresse : (avant.adresse || ''),
+        contact: client.contact !== undefined ? client.contact : (avant.contact || ''),
+        fonction: client.fonction !== undefined ? client.fonction : (avant.fonction || ''),
+        tel: client.tel !== undefined ? client.tel : (avant.tel || ''),
+        email: client.email !== undefined ? client.email : (avant.email || ''),
+        logo: client.logo !== undefined ? client.logo : (avant.logo || ''),
+        numeroClient: client.numeroClient !== undefined ? client.numeroClient : (avant.numeroClient || ''),
         /* Langue retenue pour ce client : le rapport bilingue est reproposé
            à l'intervention suivante (le technicien garde la main). */
-        langue: client.langue || avant.langue || '',
+        langue: client.langue !== undefined ? client.langue : (avant.langue || ''),
         maj: new Date().toISOString()
       };
       memo[cle] = apres;
@@ -9683,7 +9827,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
     if (!c.debut) {
       barre.innerHTML = `<button class="btn chrono-demarrer" data-a="chrono-demarrer" style="width:100%">
         ${(ICO.play && ICO.play(16)) || ''} Démarrer l'intervention</button>
-        <p class="chrono-note">L'heure de début est enregistrée automatiquement.</p>`;
+        <p class="chrono-note">L'heure de début est enregistrée automatiquement.${R.client && R.client.nom ? ' • <a href="#" data-a="sms-arrivee" style="color:var(--bleu,#06baf2);text-decoration:underline">Prévenir le contact par SMS</a>' : ''}</p>`;
     } else if (!c.fin) {
       barre.innerHTML = `<div class="chrono-encours">
         <div class="chrono-temps"><span class="chrono-label">${c.enPause ? 'En pause depuis' : 'Sur site depuis'}</span>
@@ -9692,7 +9836,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           <button class="btn sm grey" data-a="chrono-pause">${c.enPause ? (((ICO.play && ICO.play(14)) || '') + ' Reprendre') : (((ICO.pause && ICO.pause(14)) || '') + ' Pause')}</button>
           <button class="btn sm or" data-a="chrono-terminer">${(ICO.stop && ICO.stop(14)) || ''} Terminer</button>
         </div></div>
-        <p class="chrono-note">Début ${Report.heureFr(c.debut)}${(c.pauses || []).length ? ' — ' + c.pauses.length + ' pause(s) déduite(s)' : ''}</p>`;
+        <p class="chrono-note">Début ${Report.heureFr(c.debut)}${(c.pauses || []).length ? ' — ' + c.pauses.length + ' pause(s) déduite(s)' : ''}${R.client && R.client.nom ? ' • <a href="#" data-a="sms-arrivee" style="color:var(--bleu,#06baf2);text-decoration:underline">SMS d\'arrivée</a>' : ''}</p>`;
     } else {
       barre.innerHTML = `<div class="chrono-encours">
         <div class="chrono-temps"><span class="chrono-label">Temps sur site</span><strong>${Report.formatDuree(duree()) || '0 min'}</strong></div>
@@ -9757,12 +9901,17 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
               <div><span>Client</span><strong>${esc(c.nom || '—')}</strong></div>
               <div><span>Lieu</span><strong>${esc(c.lieu || c.adresse || '—')}</strong></div>
               ${recapMachines}
-              <div><span>Contact</span><strong>${esc(c.contact || '—')}</strong></div>
+              <div><span>Contact</span><strong>${esc(c.contact || '—')}${c.tel ? ' · ' + esc(c.tel) : ''}</strong></div>
               ${recapTechs}
               <div><span>Objet</span><strong>${esc(R.objet || '—')}</strong></div>
               <div><span>Langue du rapport</span><strong>${R.langue.active && R.langue.code
                 ? 'français + ' + esc(I18N.natif(R.langue.code))
                 : 'français'}</strong></div>
+            </div>
+            <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--bord,#cbd5e1)">
+              <button type="button" class="btn sm" data-a="sms-arrivee" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:#f0f9ff;border:1.5px solid var(--bleu,#06baf2);color:#0284c7;font-weight:600;padding:7px 10px;font-size:12.5px">
+                ${(ICO.sms && ICO.sms(15)) || '💬'} Prévenir le contact par SMS (arrivée sur site)
+              </button>
             </div>`
           : `<p class="hint">Renseignez le client et la machine : ces informations se retrouvent dans le rapport.</p>
              <button class="btn wide" data-a="editer-client">Client & machine</button>`}
@@ -9899,12 +10048,17 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;width:48px;text-align:center">Photo</th>
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Dénomination</th>
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Référence</th>
+            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Machine (N° série)</th>
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;text-align:center">Qté</th>
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;text-align:right">Action</th>
           </tr>
         </thead>
         <tbody>
-          ${pcs.map((p, idx) => `
+          ${pcs.map((p, idx) => {
+            const mInfo = (typeof Report !== 'undefined' && Report.infoMachinePiece)
+              ? Report.infoMachinePiece(p, R)
+              : { serie: p.machineSerie || '', designation: p.machineNom || '' };
+            return `
             <tr style="border-bottom:1px solid var(--bord);background:${idx % 2 === 1 ? '#fcfdff' : '#fff'}">
               <td style="padding:6px 8px;text-align:center;vertical-align:middle">
                 ${p.photo
@@ -9915,13 +10069,17 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
               </td>
               <td style="padding:7px 9px;vertical-align:middle"><strong>${esc(p.denomination || '—')}</strong></td>
               <td style="padding:7px 9px;font-family:ui-monospace,monospace;color:#475569;vertical-align:middle">${esc(p.reference || '—')}</td>
+              <td style="padding:7px 9px;vertical-align:middle">
+                ${mInfo.serie ? `<div style="font-weight:600;color:var(--bleu,#0369a1);font-size:12.5px"><span style="font-size:10.5px;font-weight:normal;color:#64748b">N°</span> ${esc(mInfo.serie)}</div>` : ''}
+                ${mInfo.designation ? `<div style="font-size:11.5px;color:#334155">${esc(mInfo.designation)}</div>` : (!mInfo.serie ? '<span style="color:#94a3b8;font-size:11.5px">—</span>' : '')}
+              </td>
               <td style="padding:7px 9px;text-align:center;vertical-align:middle"><strong>${esc(p.quantite || 1)}</strong></td>
               <td style="padding:7px 9px;text-align:right;white-space:nowrap;vertical-align:middle">
                 <button type="button" class="btn sm grey" style="min-height:28px;padding:2px 7px;font-size:12px" data-a="editer-piece" data-id="${esc(p.id)}" title="Modifier">${(ICO.pen && ICO.pen(12)) || ''}</button>
                 <button type="button" class="btn sm danger" style="min-height:28px;padding:2px 7px;font-size:12px;margin-left:4px" data-a="supprimer-piece" data-id="${esc(p.id)}" title="Supprimer">${(ICO.trash && ICO.trash(12)) || ''}</button>
               </td>
             </tr>
-          `).join('')}
+          `;}).join('')}
         </tbody>
       </table>
     </div>`;
@@ -9969,8 +10127,40 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
 
   function feuillePiece(pieceExistante) {
     const edit = !!pieceExistante;
-    const p = pieceExistante || { id: uid('p'), denomination: '', reference: '', quantite: 1, photo: null };
+    const p = pieceExistante || { id: uid('p'), denomination: '', reference: '', quantite: 1, photo: null, machineId: '', machineSerie: '', machineNom: '' };
     let photoEnCours = p.photo || null;
+
+    synchroniserEntites();
+    const machinesDispos = (R.machines || []).filter(m => m && (m.serie || m.designation || m.modele));
+    const listeM = (machinesDispos.length > 0) ? machinesDispos : (R.machines || []);
+
+    let selId = p.machineId || '';
+    if (!selId && p.machineSerie) {
+      const trouv = listeM.find(m => m && m.serie === p.machineSerie);
+      if (trouv) selId = trouv.id;
+    }
+    if (!selId && !edit && listeM.length === 1 && (listeM[0].serie || listeM[0].designation || listeM[0].modele)) {
+      selId = listeM[0].id || '';
+    }
+
+    const optionsMachinesHtml = listeM.map((m, idx) => {
+      const numMach = idx + 1;
+      const serie = (m.serie || '').trim();
+      const nom = (m.designation || '').trim();
+      const mod = (m.modele || '').trim();
+      let lib = '';
+      if (serie && nom) {
+        lib = 'N° de série : ' + serie + ' — ' + nom + (mod ? ' (' + mod + ')' : '');
+      } else if (serie) {
+        lib = 'N° de série : ' + serie + (mod ? ' (' + mod + ')' : '');
+      } else if (nom) {
+        lib = nom + (mod ? ' (' + mod + ')' : '') + ' (Machine ' + numMach + ' - sans N° de série)';
+      } else {
+        lib = 'Machine ' + numMach;
+      }
+      const isSel = (selId && (m.id === selId || m.serie === selId));
+      return `<option value="${esc(m.id || ('m_' + idx))}"${isSel ? ' selected' : ''}>${esc(lib)}</option>`;
+    }).join('');
 
     function htmlZonePhoto(dataUrl) {
       if (dataUrl) {
@@ -9997,6 +10187,14 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
     const panneau = Ouvrir.ouvrir(null, `<div class="panel">
       <div class="grab"></div><h3>${edit ? 'Modifier la pièce' : 'Ajouter une pièce de rechange'}</h3>
       <p class="sub">Pièce neuve de remplacement utilisée ou laissée dans le stock du client.</p>
+
+      <div class="field"><label>Machine concernée</label>
+        <select id="pcMachine" style="width:100%;padding:9px 11px;border-radius:6px;border:1px solid var(--bord,#cbd5e1);background:#fff;font-size:0.95rem;color:#1e293b">
+          <option value="">— Non rattachée / Toute l'installation —</option>
+          ${optionsMachinesHtml}
+        </select>
+        <p class="hint" style="margin-top:4px;font-size:11.5px;color:#64748b">Identification BFR par N° de série en priorité.</p>
+      </div>
 
       <div class="field"><label>Dénomination / désignation</label>
         <input type="text" id="pcDenom" value="${esc(p.denomination || '')}" placeholder="Ex. Roulement SKF 6205, Courroie SPZ 1250, Vérin…"></div>
@@ -10079,14 +10277,39 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           toast('Veuillez renseigner au moins la dénomination ou la référence');
           return;
         }
+
+        const machEl = $('#pcMachine', pEl);
+        const machIdChoisi = (machEl ? machEl.value : '') || '';
+        let machSerieChoisie = '';
+        let machNomChoisi = '';
+        if (machIdChoisi) {
+          const mObj = (R.machines || []).find(m => m && (m.id === machIdChoisi || m.serie === machIdChoisi));
+          if (mObj) {
+            machSerieChoisie = (mObj.serie || '').trim();
+            machNomChoisi = (mObj.designation || mObj.modele || '').trim();
+          }
+        }
+
         if (edit) {
           p.denomination = denom;
           p.reference = ref;
           p.quantite = qte;
           p.photo = photoEnCours || null;
+          p.machineId = machIdChoisi;
+          p.machineSerie = machSerieChoisie;
+          p.machineNom = machNomChoisi;
         } else {
           if (!Array.isArray(R.pieces)) R.pieces = [];
-          R.pieces.push({ id: p.id, denomination: denom, reference: ref, quantite: qte, photo: photoEnCours || null });
+          R.pieces.push({
+            id: p.id,
+            denomination: denom,
+            reference: ref,
+            quantite: qte,
+            photo: photoEnCours || null,
+            machineId: machIdChoisi,
+            machineSerie: machSerieChoisie,
+            machineNom: machNomChoisi
+          });
         }
         if (photoEnCours && typeof RapportDB !== 'undefined') {
           RapportDB.sauverPhoto('pc_' + p.id, photoEnCours, 'piece', (typeof R !== 'undefined' && R && R.id) || '');
@@ -10402,19 +10625,29 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         <div class="field"><label>Client</label>
           <input type="text" id="cliRecherche" autocomplete="off" value="${esc(R.client.nom || '')}"
                  placeholder="${nbClients ? 'Tapez 3 lettres (ex. ENT, CFR, LAC…)' : 'Tapez 3 lettres du nom du client'}">
-          <p class="small">${nbClients
-            ? 'Liste BFR : ' + nbClients + " client(s) — les correspondances s'affichent dès la 3<sup>e</sup> lettre."
-            : 'Aucune liste clients dans cette version : importez-la une fois dans Menu → Réglages → <em>Liste clients</em>.'}</p>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+            <p class="small" style="margin:0">${nbClients
+              ? 'Liste BFR : ' + nbClients + " client(s) — suggestions dès la 3<sup>e</sup> lettre."
+              : 'Aucune liste clients dans cette version : importez-la dans Menu → Réglages.'}</p>
+            <button type="button" class="btn ghost sm" data-a="vers-annuaire" style="font-size:11px;padding:2px 8px;flex-shrink:0">${(ICO.users && ICO.users(12)) || ''} Annuaire complet</button>
+          </div>
           <div class="suggestions" id="cliSug" hidden></div>
         </div>
         <div class="grid2">${f('client.contact', 'Contact sur site (nom)', { ph: 'Ex. M. Rivière' })}${f('client.fonction', 'Fonction', { ph: 'Ex. Responsable maintenance' })}</div>
         <div class="grid2">${f('client.tel', 'Téléphone du client', { type: 'tel', ph: 'Ex. 04 78 55 44 33' })}${f('client.email', 'E-mail du client', { type: 'email', ph: 'Ex. contact@client.fr' })}</div>
+        <div style="display:flex;justify-content:flex-end;margin-top:-6px;margin-bottom:8px">
+          <button type="button" class="btn ghost sm" data-a="sms-arrivee" style="font-size:11.5px;padding:2px 8px;display:flex;align-items:center;gap:4px;color:#0284c7">
+            ${(ICO.sms && ICO.sms(13)) || '💬'} Prévenir le contact par SMS
+          </button>
+        </div>
         ${f('client.adresse', 'Adresse du client', { ph: 'Rue, code postal, ville' })}
         ${f('client.lieu', "Lieu d'intervention", { list: 'dlLieux', ph: "Ex. Atelier 2 — ligne 4" })}
         <div class="filebtn" style="margin-top:8px"><input type="file" id="logoClient" accept="image/*">
           <label for="logoClient">${(ICO.image && ICO.image(16)) || ''} ${R.client.logo ? 'Changer le logo du client' : 'Ajouter le logo du client (facultatif)'}</label></div>
-        ${R.client.logo ? '<img src="' + R.client.logo + '" style="max-height:52px;margin-top:8px;background:#fff;border:1px solid var(--bord);border-radius:6px">'
-                        : '<p class="small">Sans logo, la place reste vide dans le compte rendu.</p>'}
+        <div id="zoneApercuLogoClient">
+          ${R.client.logo ? '<img src="' + R.client.logo + '" style="max-height:52px;margin-top:8px;background:#fff;border:1px solid var(--bord);border-radius:6px">'
+                          : '<p class="small">Sans logo, la place reste vide dans le compte rendu.</p>'}
+        </div>
       </div>
       <div class="card" id="cardMachines">
         <h2>${(R.machines && R.machines.length > 1) ? 'Machines visitées' : 'Machine'}</h2>
@@ -10644,6 +10877,15 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       /* Toute correction saisie ici (téléphone, e-mail, contact, logo) est
          mémorisée pour les prochaines interventions chez ce client. */
       panneau.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-a="vers-annuaire"]')) {
+          panneau.closest('.sheet').remove();
+          feuilleAnnuaireClients();
+          return;
+        }
+        if (ev.target.closest('[data-a="sms-arrivee"]')) {
+          feuilleSMSArrivee();
+          return;
+        }
         if (ev.target.closest('[data-a="ok"], [data-a="fermer"]')) Clients.retenir(R.client);
       });
 
@@ -10666,24 +10908,24 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           </button>`).join('');
       }
 
-      /* Choix d'un client : on remplit tout ce que la liste connaît, sans
-         écraser ce que le technicien a déjà saisi (sauf le nom). */
+      /* Choix d'un client : réinitialisation propre et complète avec les données
+         du client sélectionné (évite de conserver les coordonnées de l'ancien client). */
       function choisirClient(c) {
         R.client.nom = c.nom;
         R.client.reference = c.reference || '';
-        if (c.adresse) R.client.adresse = c.adresse;
-        if (c.ville) R.client.lieu = c.ville;
-        if (c.contact) R.client.contact = c.contact;
-        if (c.fonction) R.client.fonction = c.fonction;
-        if (c.tel) R.client.tel = c.tel;
-        if (c.email) R.client.email = c.email;
-        if (c.logo) R.client.logo = c.logo;
-        if (c.numeroClient) R.client.numeroClient = c.numeroClient;
-        R.client.noteContacts = c.autresContacts || R.client.noteContacts || '';
+        R.client.adresse = c.adresse || '';
+        R.client.lieu = c.ville || '';
+        R.client.contact = c.contact || '';
+        R.client.fonction = c.fonction || '';
+        R.client.tel = c.tel || '';
+        R.client.email = c.email || '';
+        R.client.logo = c.logo || '';
+        R.client.numeroClient = c.numeroClient || '';
+        R.client.noteContacts = c.autresContacts || '';
+        R.client.langue = c.langue || '';
         /* Langue déjà utilisée chez ce client : proposée d'office (l'option
            reste à cocher par le technicien, elle n'est jamais activée seule). */
         if (c.langue) {
-          R.client.langue = c.langue;
           R.langue.code = c.langue;
           const sel = $('#langCode', panneau);
           if (sel) sel.value = c.langue;
@@ -10693,7 +10935,16 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         planifier();
         champ.value = c.nom;
         $$('[data-fk]', panneau).forEach(el => { el.value = getPath(R, el.dataset.fk) || ''; });
-        const img = $('.card img', panneau);
+        const zoneLogo = $('#zoneApercuLogoClient', panneau);
+        if (zoneLogo) {
+          zoneLogo.innerHTML = c.logo
+            ? `<img src="${c.logo}" style="max-height:52px;margin-top:8px;background:#fff;border:1px solid var(--bord);border-radius:6px">`
+            : '<p class="small">Sans logo, la place reste vide dans le compte rendu.</p>';
+        }
+        const lblLogo = $('label[for="logoClient"]', panneau);
+        if (lblLogo) {
+          lblLogo.innerHTML = ((ICO.image && ICO.image(16)) || '') + ' ' + (c.logo ? 'Changer le logo du client' : 'Ajouter le logo du client (facultatif)');
+        }
         fermerSuggestions();
         rendreEntete(); rendreTout();
         const manque = [];
@@ -10721,6 +10972,14 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         if (!ev.target.files[0]) return;
         try {
           R.client.logo = await compresserImage(ev.target.files[0], 520, 0.92);
+          const zoneLogo = $('#zoneApercuLogoClient', panneau);
+          if (zoneLogo) {
+            zoneLogo.innerHTML = '<img src="' + R.client.logo + '" style="max-height:52px;margin-top:8px;background:#fff;border:1px solid var(--bord);border-radius:6px">';
+          }
+          const lblLogo = $('label[for="logoClient"]', panneau);
+          if (lblLogo) {
+            lblLogo.innerHTML = ((ICO.image && ICO.image(16)) || '') + ' Changer le logo du client';
+          }
           planifier(); toast('Logo du client enregistré');
         } catch (err) { toast('Image illisible'); }
       });
@@ -11690,7 +11949,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         <p class="small">Vide = adresses du modèle : 1, rue du Jariel, 77120 Coulommiers — 50 allée des érables, 01150 Blyes.</p>
       </div>
 
-      <div class="card"><h2>Liste clients</h2>
+      <div class="card"><h2>Liste clients & Annuaire</h2>
         <p class="small">${Clients.base().length
           ? `La liste du classeur « COORDONNÉES CLIENTS » est embarquée dans l'application
         (${Clients.base().length} client(s)) : tapez 3 lettres dans un rapport pour voir les correspondances.`
@@ -11698,6 +11957,9 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         (export CSV du classeur ou JSON) — elle sera conservée dans ce téléphone et restera disponible hors connexion.`}
         Les téléphones, e-mails, logos et contacts saisis sur le terrain sont mémorisés sur ce téléphone
         (${Object.keys(Clients.memo()).length} fiche(s) enrichie(s)) et proposés la prochaine fois.</p>
+        <div style="margin:10px 0">
+          <button class="btn" type="button" data-a="ouvrir-annuaire" style="width:100%">${(ICO.users && ICO.users(16)) || ''} Ouvrir l'annuaire & gérer les fiches clients</button>
+        </div>
         <div class="filebtn"><input type="file" id="clientsImport" accept=".csv,.json,text/csv,application/json">
           <label for="clientsImport">${(ICO.download && ICO.download(16)) || ''} Mettre à jour la liste (export CSV du classeur ou JSON)</label></div>
         <p class="small">Le fichier remplace la liste précédente ; il est conservé dans le téléphone et reste
@@ -11789,6 +12051,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           return;
         }
         if (e.target.closest('[data-a="identite"]')) { e.target.closest('.sheet').remove(); feuilleIdentite(); return; }
+        if (e.target.closest('[data-a="ouvrir-annuaire"]')) { e.target.closest('.sheet').remove(); feuilleAnnuaireClients(); return; }
         if (e.target.closest('[data-a="clients-export"]')) {
           const contenu = JSON.stringify({ clients: Clients.liste() }, null, 1);
           telecharger(new Blob([contenu], { type: 'application/json' }), 'clients-bfr-' + todayISO() + '.json');
@@ -11949,6 +12212,426 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
     }, 400);
   }
 
+  /* ===================== SMS d'arrivée sur site ======================== */
+  function feuilleSMSArrivee() {
+    if (!R.client || !R.client.nom) {
+      toast('Veuillez d\'abord renseigner le client', 3000);
+      feuilleClient();
+      return;
+    }
+
+    const c = R.client;
+    let telClient = c.tel || c.numeroClient || '';
+    let texteSMS = Report.texteSMSArrivee(R, S, R.langue && R.langue.active ? R.langue.code : 'fr');
+
+    function genererUrlSMS(numero, corps) {
+      const cleanNum = String(numero || '').replace(/[^\d+]/g, '');
+      // Format standard URI RFC 5724 supporté par Android et iOS :
+      return 'sms:' + encodeURIComponent(cleanNum) + '?body=' + encodeURIComponent(corps);
+    }
+
+    const html = `<div class="panel">
+      <div class="grab"></div>
+      <h3>${(ICO.sms && ICO.sms(20)) || '💬'} Prévenir le contact par SMS</h3>
+      <p class="sub">Envoyez un SMS professionnel au contact sur site pour lui annoncer votre arrivée et le début de l'intervention.</p>
+
+      <div class="card" style="margin-bottom:10px">
+        <div class="field">
+          <label style="font-weight:600">Numéro de téléphone du contact</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="tel" id="smsNumeroDest" value="${esc(telClient)}" placeholder="Ex. 06 12 34 56 78" style="flex:1">
+          </div>
+          <p class="small" style="margin-top:4px;color:#64748b">Contact : <strong>${esc(c.contact || 'Non renseigné')}</strong> (${esc(c.nom || 'Client')})</p>
+        </div>
+
+        <div class="field" style="margin-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <label style="font-weight:600;margin:0">Message pré-rempli</label>
+            <button type="button" class="btn ghost sm" id="btnReinitSMS" style="padding:2px 8px;font-size:11px">Réinitialiser</button>
+          </div>
+          <textarea id="smsTexteMessage" rows="6" style="width:100%;font-size:13px;line-height:1.4;padding:8px">${esc(texteSMS)}</textarea>
+          <p class="small" style="color:#64748b;margin-top:4px">Vous pouvez ajuster le message (ex. préciser un point d'accueil ou de garde).</p>
+        </div>
+      </div>
+
+      <div class="btnrow" style="flex-direction:column;gap:8px">
+        <a id="btnLancerSMS" href="${esc(genererUrlSMS(telClient, texteSMS))}" class="btn wide" style="text-align:center;text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;padding:11px;background:var(--bleu,#06baf2);color:#fff">
+          ${(ICO.sms && ICO.sms(18)) || '💬'} Ouvrir l'application SMS du téléphone
+        </a>
+        <div style="display:flex;gap:8px;width:100%">
+          <button type="button" class="btn sm grey" id="btnCopierSMS" style="flex:1">Copier le texte</button>
+          <button type="button" class="btn sm grey" data-a="fermer" style="flex:1">Fermer</button>
+        </div>
+      </div>
+    </div>`;
+
+    Ouvrir.ouvrir(null, html, (panneau) => {
+      const inpNum = $('#smsNumeroDest', panneau);
+      const txtMsg = $('#smsTexteMessage', panneau);
+      const btnLien = $('#btnLancerSMS', panneau);
+      const btnReinit = $('#btnReinitSMS', panneau);
+      const btnCopier = $('#btnCopierSMS', panneau);
+
+      function actualiserLien() {
+        const num = inpNum.value.trim();
+        const msg = txtMsg.value;
+        btnLien.href = genererUrlSMS(num, msg);
+        if (num && !c.tel) {
+          c.tel = num;
+          planifier();
+        }
+      }
+
+      inpNum.addEventListener('input', actualiserLien);
+      txtMsg.addEventListener('input', actualiserLien);
+
+      panneau.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-a="fermer"]')) {
+          const sh = panneau.closest('.sheet');
+          if (sh) sh.remove();
+          rendreTout();
+        }
+      });
+
+      btnLien.addEventListener('click', (e) => {
+        const num = inpNum.value.trim();
+        if (!num) {
+          e.preventDefault();
+          toast('Veuillez indiquer un numéro de téléphone');
+          inpNum.focus();
+          return;
+        }
+        setTimeout(() => {
+          const sh = panneau.closest('.sheet');
+          if (sh) sh.remove();
+        }, 1200);
+        toast('Ouverture de l\'application SMS...');
+      });
+
+      if (btnReinit) {
+        btnReinit.addEventListener('click', () => {
+          txtMsg.value = Report.texteSMSArrivee(R, S, R.langue && R.langue.active ? R.langue.code : 'fr');
+          actualiserLien();
+          toast('Message réinitialisé');
+        });
+      }
+
+      if (btnCopier) {
+        btnCopier.addEventListener('click', () => {
+          copier(txtMsg.value);
+          toast('Texte du SMS copié dans le presse-papier');
+        });
+      }
+    });
+  }
+
+  /* ===================== Annuaire clients ============================= */
+  function feuilleAnnuaireClients(clientNomInitial) {
+    function normTxt(t) {
+      return String(t == null ? '' : t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '');
+    }
+
+    let clientEdite = clientNomInitial ? (Clients.parNom(clientNomInitial) || { nom: clientNomInitial, isNouveau: true }) : null;
+    let modeEdition = !!clientEdite;
+    let recherche = '';
+    let logoTemp = clientEdite ? (clientEdite.logo || '') : '';
+
+    Ouvrir.ouvrir(null, `<div class="panel" style="max-height:90vh;display:flex;flex-direction:column">
+      <div id="annuaireCorps" style="display:flex;flex-direction:column;min-height:0;flex:1"></div>
+    </div>`, (pan) => {
+      const zoneCorps = $('#annuaireCorps', pan);
+
+      function afficherListe() {
+        modeEdition = false;
+        clientEdite = null;
+        const tousClients = Clients.liste();
+        const memo = Clients.memo();
+        const q = normTxt(recherche);
+        let filtres = tousClients;
+        if (q.length >= 2) {
+          filtres = tousClients.filter(c => {
+            return normTxt(c.nom).indexOf(q) !== -1 ||
+                   normTxt(c.ville).indexOf(q) !== -1 ||
+                   normTxt(c.contact).indexOf(q) !== -1 ||
+                   normTxt(c.email).indexOf(q) !== -1;
+          });
+        }
+        // Tri : fiches enrichies ou récentes d'abord, puis ordre alphabétique
+        filtres.sort((a, b) => {
+          const aMemo = !!memo[normTxt(a.nom)];
+          const bMemo = !!memo[normTxt(b.nom)];
+          if (aMemo && !bMemo) return -1;
+          if (!aMemo && bMemo) return 1;
+          return String(a.nom || '').localeCompare(String(b.nom || ''), 'fr');
+        });
+
+        const nbTotal = tousClients.length;
+        const nbMemo = Object.keys(memo).length;
+        const afficherMax = 50;
+        const clientsVisibles = filtres.slice(0, afficherMax);
+
+        zoneCorps.innerHTML = `
+          <div class="grab"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <h3 style="margin:0">${(ICO.users && ICO.users(20)) || ''} Annuaire clients</h3>
+            <button type="button" class="btn sm" data-a="nouveau-client">${(ICO.plus && ICO.plus(14)) || ''} Nouveau client</button>
+          </div>
+          <p class="sub" style="margin-bottom:8px">Consultez ou enrichissez les coordonnées clients. Les modifications sont conservées sur ce téléphone <strong>sans modifier votre intervention en cours</strong>.</p>
+
+          <div style="margin-bottom:8px">
+            <input type="search" id="inputRechercheAnnuaire" placeholder="Rechercher par nom, ville, contact, e-mail..." value="${esc(recherche)}" style="width:100%;font-size:14px;padding:8px 12px;border:1px solid var(--bord,#cbd5e1);border-radius:8px">
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#64748b;margin-bottom:8px">
+            <span>${filtres.length} client(s) trouvé(s) ${filtres.length > afficherMax ? '(50 premiers)' : ''}</span>
+            <span>${nbMemo} fiche(s) personnalisée(s)</span>
+          </div>
+
+          <div id="listeCartesClients" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px">
+            ${clientsVisibles.length ? clientsVisibles.map(c => {
+              const estEnrichi = !!memo[normTxt(c.nom)];
+              return `
+                <div class="card" data-client-nom="${esc(c.nom)}" style="margin:0;padding:10px 12px;cursor:pointer;border:1px solid ${estEnrichi ? 'var(--bleu,#06baf2)' : 'var(--bord,#e2e8f0)'};border-radius:8px;background:#fff;transition:background 0.15s">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+                    <div style="min-width:0;flex:1">
+                      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                        <strong style="font-size:13.5px;color:var(--bleu-fonce,#332e72)">${esc(c.nom)}</strong>
+                        ${estEnrichi ? `<span style="font-size:10px;font-weight:600;background:#e0f2fe;color:#0284c7;padding:1px 6px;border-radius:4px">Fiche enrichie</span>` : ''}
+                      </div>
+                      ${c.ville || c.adresse ? `<div style="font-size:12px;color:#64748b;margin-top:2px">${esc([c.ville, c.adresse].filter(Boolean).join(' — '))}</div>` : ''}
+                      <div style="display:flex;gap:12px;margin-top:4px;font-size:11.5px;color:#475569;flex-wrap:wrap">
+                        ${c.contact ? `<span>${(ICO.user && ICO.user(12)) || ''} ${esc(c.contact)}${c.fonction ? ' (' + esc(c.fonction) + ')' : ''}</span>` : ''}
+                        ${c.tel ? `<span>📞 ${esc(c.tel)}</span>` : ''}
+                        ${c.email ? `<span>✉ ${esc(c.email)}</span>` : ''}
+                      </div>
+                    </div>
+                    <button type="button" class="btn sm grey" data-client-nom="${esc(c.nom)}" style="padding:4px 10px;font-size:11.5px;flex-shrink:0">Modifier</button>
+                  </div>
+                </div>`;
+            }).join('') : `
+              <div style="text-align:center;padding:24px 12px;color:#64748b">
+                <p>Aucun client trouvé pour « ${esc(recherche)} »</p>
+                <button type="button" class="btn sm" data-a="creer-recherche" style="margin-top:8px">${(ICO.plus && ICO.plus(14)) || ''} Créer la fiche « ${esc(recherche)} »</button>
+              </div>`}
+          </div>
+
+          <div class="btnrow" style="margin-top:10px">
+            <button type="button" class="btn grey wide" data-a="fermer-annuaire">Fermer</button>
+          </div>
+        `;
+
+        const inp = $('#inputRechercheAnnuaire', zoneCorps);
+        if (inp) {
+          inp.addEventListener('input', () => {
+            recherche = inp.value;
+            afficherListe();
+            const reInp = $('#inputRechercheAnnuaire', zoneCorps);
+            if (reInp) { reInp.focus(); reInp.selectionStart = reInp.selectionEnd = reInp.value.length; }
+          });
+        }
+      }
+
+      function afficherFormulaire(client, isNouveau) {
+        modeEdition = true;
+        client = client || { nom: '', adresse: '', ville: '', contact: '', fonction: '', tel: '', email: '', logo: '', langue: '', numeroClient: '', autresContacts: '' };
+        logoTemp = client.logo || '';
+        const memo = Clients.memo();
+        const estDansMemo = !!memo[normTxt(client.nom)];
+        const estClientActif = normTxt(R.client.nom) && normTxt(R.client.nom) === normTxt(client.nom);
+
+        const fAnnuaire = (id, label, type, val, ph) => `
+          <div class="field" style="margin-bottom:8px">
+            <label style="font-size:12px;font-weight:600;margin-bottom:3px;display:block">${esc(label)}</label>
+            <input type="${type || 'text'}" id="${id}" value="${esc(val || '')}" placeholder="${esc(ph || '')}" style="width:100%">
+          </div>`;
+
+        zoneCorps.innerHTML = `
+          <div class="grab"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <h3 style="margin:0">${isNouveau ? 'Nouveau client' : 'Fiche client'}</h3>
+            <button type="button" class="btn ghost sm" data-a="retour-liste">← Annuaire</button>
+          </div>
+
+          <div class="sticky-note" style="margin:6px 0 10px 0;background:#f0f9ff;border-left:4px solid var(--bleu,#06baf2);padding:6px 10px;font-size:11.5px;color:#0369a1">
+            ${estClientActif
+              ? `Ce client correspond à votre <strong>intervention en cours</strong> : l'enregistrement mettra à jour l'annuaire ET votre rapport.`
+              : `Modifications enregistrées dans l'annuaire durable du téléphone. Votre intervention en cours (<strong>${esc(R.numero || 'N°')} — ${esc(R.client.nom || 'Sans client')}</strong>) ne sera pas modifiée.`}
+          </div>
+
+          <div style="flex:1;overflow-y:auto;padding-right:2px">
+            ${fAnnuaire('annNom', 'Nom de la société / client *', 'text', client.nom, 'Ex. CLIENT EXEMPLE 1')}
+            <div class="grid2">
+              ${fAnnuaire('annContact', 'Contact sur site (nom)', 'text', client.contact, 'Ex. M. Rivière')}
+              ${fAnnuaire('annFonction', 'Fonction du contact', 'text', client.fonction, 'Ex. Responsable maintenance')}
+            </div>
+            <div class="grid2">
+              ${fAnnuaire('annTel', 'Téléphone ({numero_client})', 'tel', client.tel || client.numeroClient, 'Ex. 04 78 55 44 33')}
+              ${fAnnuaire('annEmail', 'E-mail du client', 'email', client.email, 'Ex. contact@client.fr')}
+            </div>
+            ${fAnnuaire('annAdresse', 'Adresse du client', 'text', client.adresse, 'Rue, code postal, ville')}
+            ${fAnnuaire('annVille', 'Ville / Lieu habituel', 'text', client.ville || client.lieu, 'Ex. Blyes')}
+
+            <div class="field" style="margin-bottom:8px">
+              <label style="font-size:12px;font-weight:600;margin-bottom:3px;display:block">Langue habituelle de correspondance</label>
+              <select id="annLangue" style="width:100%;padding:8px;border:1px solid var(--bord,#cbd5e1);border-radius:6px">
+                <option value="" ${!client.langue ? 'selected' : ''}>Par défaut (Français)</option>
+                <option value="en" ${client.langue === 'en' ? 'selected' : ''}>Anglais (English)</option>
+                <option value="de" ${client.langue === 'de' ? 'selected' : ''}>Allemand (Deutsch)</option>
+                <option value="nl" ${client.langue === 'nl' ? 'selected' : ''}>Néerlandais (Nederlands)</option>
+                <option value="es" ${client.langue === 'es' ? 'selected' : ''}>Espagnol (Español)</option>
+                <option value="it" ${client.langue === 'it' ? 'selected' : ''}>Italien (Italiano)</option>
+                <option value="pt" ${client.langue === 'pt' ? 'selected' : ''}>Portugais (Português)</option>
+              </select>
+            </div>
+
+            <div class="field" style="margin-bottom:8px">
+              <label style="font-size:12px;font-weight:600;margin-bottom:3px;display:block">Logo du client (facultatif)</label>
+              <div class="filebtn"><input type="file" id="annLogoInput" accept="image/*">
+                <label for="annLogoInput">${(ICO.image && ICO.image(16)) || ''} ${logoTemp ? 'Changer le logo' : 'Ajouter un logo'}</label></div>
+              <div id="annApercuLogo" style="margin-top:6px">
+                ${logoTemp ? `<img src="${logoTemp}" style="max-height:48px;background:#fff;border:1px solid var(--bord);border-radius:6px">
+                  <button type="button" class="btn sm danger" data-a="supprimer-logo-annuaire" style="margin-left:8px;padding:2px 8px;font-size:11px">Retirer</button>`
+                           : '<span class="small" style="color:#64748b">Sans logo</span>'}
+              </div>
+            </div>
+
+            <div class="field" style="margin-bottom:8px">
+              <label style="font-size:12px;font-weight:600;margin-bottom:3px;display:block">Autres contacts / Notes internes</label>
+              <input type="text" id="annNotes" value="${esc(client.noteContacts || client.autresContacts || '')}" placeholder="Ex. Chef d'équipe poste matin : 06..." style="width:100%">
+            </div>
+          </div>
+
+          <div class="btnrow" style="margin-top:10px">
+            <button type="button" class="btn grey" data-a="retour-liste">Annuler</button>
+            <button type="button" class="btn" data-a="enregistrer-client">Enregistrer dans l'annuaire</button>
+          </div>
+
+          ${estDansMemo ? `
+            <div style="text-align:right;margin-top:8px">
+              <button type="button" class="btn ghost danger sm" data-a="reinitialiser-fiche" style="font-size:11px">Réinitialiser les personnalisations locales de ce client</button>
+            </div>` : ''}
+        `;
+
+        const inpLogo = $('#annLogoInput', zoneCorps);
+        if (inpLogo) {
+          inpLogo.addEventListener('change', async (ev) => {
+            if (!ev.target.files[0]) return;
+            try {
+              logoTemp = await compresserImage(ev.target.files[0], 520, 0.92);
+              const apercu = $('#annApercuLogo', zoneCorps);
+              if (apercu) {
+                apercu.innerHTML = `<img src="${logoTemp}" style="max-height:48px;background:#fff;border:1px solid var(--bord);border-radius:6px">
+                  <button type="button" class="btn sm danger" data-a="supprimer-logo-annuaire" style="margin-left:8px;padding:2px 8px;font-size:11px">Retirer</button>`;
+              }
+            } catch (err) { toast('Image illisible'); }
+          });
+        }
+      }
+
+      // Gestion des clics dans l'annuaire
+      zoneCorps.addEventListener('click', (ev) => {
+        const btnFermer = ev.target.closest('[data-a="fermer-annuaire"]');
+        if (btnFermer) { pan.closest('.sheet').remove(); return; }
+
+        const btnRetour = ev.target.closest('[data-a="retour-liste"]');
+        if (btnRetour) { afficherListe(); return; }
+
+        const btnNouveau = ev.target.closest('[data-a="nouveau-client"]');
+        if (btnNouveau) { afficherFormulaire(null, true); return; }
+
+        const btnCreerRech = ev.target.closest('[data-a="creer-recherche"]');
+        if (btnCreerRech) { afficherFormulaire({ nom: recherche.trim() }, true); return; }
+
+        const carteClient = ev.target.closest('[data-client-nom]');
+        if (carteClient) {
+          const nom = carteClient.dataset.clientNom;
+          const c = Clients.parNom(nom);
+          if (c) afficherFormulaire(c, false);
+          return;
+        }
+
+        const btnSupprLogo = ev.target.closest('[data-a="supprimer-logo-annuaire"]');
+        if (btnSupprLogo) {
+          logoTemp = '';
+          const apercu = $('#annApercuLogo', zoneCorps);
+          if (apercu) apercu.innerHTML = '<span class="small" style="color:#64748b">Sans logo</span>';
+          return;
+        }
+
+        const btnResetFiche = ev.target.closest('[data-a="reinitialiser-fiche"]');
+        if (btnResetFiche) {
+          const nom = ($('#annNom', zoneCorps).value || '').trim();
+          if (confirm('Supprimer les données locales enregistrées pour « ' + nom + ' » et revenir aux données d\'origine ?')) {
+            Clients.oublier(nom);
+            toast('Fiche ' + nom + ' réinitialisée');
+            afficherListe();
+          }
+          return;
+        }
+
+        const btnSave = ev.target.closest('[data-a="enregistrer-client"]');
+        if (btnSave) {
+          const nom = ($('#annNom', zoneCorps).value || '').trim();
+          if (!nom) { toast('Veuillez saisir un nom de client'); $('#annNom', zoneCorps).focus(); return; }
+
+          const adresse = ($('#annAdresse', zoneCorps).value || '').trim();
+          const ville = ($('#annVille', zoneCorps).value || '').trim();
+          const contact = ($('#annContact', zoneCorps).value || '').trim();
+          const fonction = ($('#annFonction', zoneCorps).value || '').trim();
+          const tel = ($('#annTel', zoneCorps).value || '').trim();
+          const email = ($('#annEmail', zoneCorps).value || '').trim();
+          const langue = ($('#annLangue', zoneCorps).value || '').trim();
+          const notes = ($('#annNotes', zoneCorps).value || '').trim();
+
+          const donnees = {
+            nom: nom,
+            adresse: adresse,
+            lieu: ville,
+            ville: ville,
+            contact: contact,
+            fonction: fonction,
+            tel: tel,
+            email: email,
+            logo: logoTemp || '',
+            langue: langue,
+            numeroClient: tel,
+            autresContacts: notes
+          };
+
+          Clients.retenir(donnees);
+
+          // Vérifier si le client édité est le client de l'intervention active
+          const estActif = normTxt(R.client.nom) && normTxt(R.client.nom) === normTxt(nom);
+          if (estActif) {
+            R.client.adresse = adresse;
+            R.client.lieu = ville;
+            R.client.contact = contact;
+            R.client.fonction = fonction;
+            R.client.tel = tel;
+            R.client.email = email;
+            R.client.logo = logoTemp || '';
+            R.client.numeroClient = tel;
+            R.client.noteContacts = notes;
+            if (langue) R.client.langue = langue;
+            planifier(); rendreEntete(); rendreTout();
+            toast('Fiche « ' + nom + ' » enregistrée (intervention en cours actualisée)');
+          } else {
+            toast('Fiche « ' + nom + ' » enregistrée dans l\'annuaire');
+          }
+
+          afficherListe();
+        }
+      });
+
+      // Initialisation
+      if (modeEdition && clientEdite) {
+        afficherFormulaire(clientEdite, !!clientEdite.isNouveau);
+      } else {
+        afficherListe();
+      }
+    });
+  }
+
   /* ===================== Menu ========================================= */
   function feuilleMenu() {
     const liste = Store.get(K.rapports, []);
@@ -11960,6 +12643,8 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       <button class="menu-item" data-a="signer"><span class="ico">${(ICO.signature && ICO.signature(18)) || ''}</span><span>Faire signer le client<small>${R.signatureClient && R.signatureClient.dataUrl ? 'Signé par ' + esc(R.signatureClient.nom || 'le client') : 'Signature tactile sur écran'}</small></span></button>
       <button class="menu-item" data-a="soumettre"><span class="ico">${(ICO.send && ICO.send(18)) || ''}</span><span>Soumettre le rapport<small>Transmission PDF par e-mail</small></span></button>
       <button class="menu-item" data-a="identite"><span class="ico">${(ICO.user && ICO.user(18)) || ''}</span><span>Mes informations<small>${esc(Report.nomComplet(S.technicien) || 'nom, téléphone, e-mail à renseigner')}</small></span></button>
+      <button class="menu-item" data-a="annuaire"><span class="ico">${(ICO.users && ICO.users(18)) || (ICO.user && ICO.user(18)) || ''}</span><span>Annuaire clients<small>Consulter, modifier ou ajouter un client hors intervention</small></span></button>
+      <button class="menu-item" data-a="sms-arrivee"><span class="ico">${(ICO.sms && ICO.sms(18)) || ''}</span><span>Prévenir le contact par SMS<small>Annoncer votre arrivée sur site au contact client</small></span></button>
       <button class="menu-item" data-a="icones"><span class="ico">${(ICO.palette && ICO.palette(18)) || (ICO.gear && ICO.gear(18)) || ''}</span><span>Icône de l'application<small>Changer l'icône sur l'écran d'accueil Android</small></span></button>
       <button class="menu-item" data-a="reglages"><span class="ico">${(ICO.gear && ICO.gear(18)) || ''}</span><span>Réglages<small>Société, envoi, canevas du rapport</small></span></button>
       <button class="menu-item" data-a="actualiser"><span class="ico">${(ICO.clock && ICO.clock(18)) || ''}</span><span>Actualiser l'application<small>Vider le cache et forcer la dernière version</small></span></button>
@@ -11980,6 +12665,8 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         if (a === 'signer') signerClient();
         else if (a === 'soumettre') soumettre();
         else if (a === 'identite') feuilleIdentite();
+        else if (a === 'annuaire') feuilleAnnuaireClients();
+        else if (a === 'sms-arrivee') feuilleSMSArrivee();
         else if (a === 'icones') feuilleIcones();
         else if (a === 'reglages') feuilleReglages();
         else if (a === 'actualiser') actualiserApp();
@@ -12248,6 +12935,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       else if (a === 'cloturer-retour-reel') feuilleTrajet(true);
       else if (a === 'ajouter-ev') ajouterEvenement();
       else if (a === 'editer-client') feuilleClient();
+      else if (a === 'sms-arrivee') feuilleSMSArrivee();
       else if (a === 'ajouter-piece') feuillePiece();
       else if (a === 'voir-photo-pc') {
         const id = b.dataset.id;
@@ -12965,9 +13653,11 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
     feuilleMenu: feuilleMenu, feuilleIcones: feuilleIcones, soumettre: soumettre,
     feuilleEnvoi: feuilleEnvoi, fichiersEnvoi: fichiersEnvoi, actualiserApp: actualiserApp,
     apercuEvenement: apercuEvenement, feuillePiece: feuillePiece, afficherVisionneusePhoto: afficherVisionneusePhoto,
-    feuilleTrajet: feuilleTrajet
+    feuilleTrajet: feuilleTrajet, feuilleAnnuaireClients: feuilleAnnuaireClients,
+    feuilleClient: feuilleClient, feuilleReglages: feuilleReglages,
+    feuilleSMSArrivee: feuilleSMSArrivee
   };
 })();
 </script>
-<script>window.SAV_VERSION="971fd7e235";window.SAV_DATE="05/10/2026";</script></body>
+<script>window.SAV_VERSION="aaba5c5735";window.SAV_DATE="07/10/2026";</script></body>
 </html>
