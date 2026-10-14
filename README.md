@@ -190,8 +190,25 @@ python3 build.py        # régénère CR-Intervention-SAV.html et docs/
 Sans le fichier `app/src/clients-data.js` (jamais publié), le build se fait automatiquement
 sans liste clients.
 
-Les tests automatisés (~170 vérifications, dont le rendu page par page du rapport) et l'outil
-de préparation du fichier de liste clients restent dans le dépôt de travail interne.
+### Tests automatiques
+
+`tests/test_appli.py` ouvre l'application construite dans un vrai navigateur (format
+téléphone) et rejoue les gestes du terrain : identité et numéros de rapport, photos des
+rapports de l'historique, rapport PDF et Word (numérotation, mise en page selon les photos,
+images du Word), recherche et ménage de l'historique, réglages d'équipe.
+
+```bash
+pip install playwright pypdf
+python -m playwright install --with-deps chromium
+python build.py --sans-liste
+python tests/test_appli.py      # « 5 test(s), 0 échec(s) » attendu
+```
+
+La GitHub Action (`.github/workflows/pages.yml`) lance ces tests à chaque envoi sur `main`
+et **ne publie la nouvelle version que s'ils passent tous**. Les PDF et Word générés pendant
+les tests sont téléchargeables dans l'onglet *Actions* (« rapports-de-test »).
+
+L'outil de préparation du fichier de liste clients reste dans le dépôt de travail interne.
 
 ### Personnalisation sans toucher au code
 
@@ -200,6 +217,12 @@ dans le téléphone (ils ne modifient pas le dépôt) :
 
 - **identité du technicien** (Prénom, Nom, Fonction, Téléphone, E-mail, signature) — ☰ → *Mes informations*,
   utilisée dans l'en-tête et dans le bloc de signature de chaque rapport ;
+- **réglages d'équipe** : un fichier JSON (☰ → Réglages → *Exporter / Importer les réglages
+  d'équipe*) qui configure un téléphone neuf comme les autres (adresses d'envoi, société,
+  mise en page, canevas, domaines, catégories), sans l'identité du technicien. Aucune adresse
+  e-mail n'est écrite dans le code publié ;
+- **mise en page des évènements** dans le PDF et le Word : compacte (selon le nombre de
+  photos) ou une page par évènement ;
 - e-mail du responsable SAV, copie systématique, objet et corps du mail (avec variables
   `{{affaire}}`, `{{client}}`, `{{date}}`, `{{heures}}`, `{{ecarts}}`, `{{recommandations}}`…) ;
 - **canevas du rapport** (ordre et contenu des sections) en JSON ;

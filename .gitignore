@@ -1,0 +1,4 @@
+tests/resultats/
+__pycache__/
+*.pyc
+app/src/clients-data.js

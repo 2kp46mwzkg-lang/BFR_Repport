@@ -22,6 +22,21 @@ rapport PDF + Word envoyé au client et au responsable SAV. **Elle fonctionne sa
 Elles sont mémorisées dans le téléphone et reprises automatiquement sur chaque rapport
 (contact technique, e-mail, téléphone imprimés en page 1).
 
+L'application ne démarre pas d'intervention tant que le nom n'est pas renseigné.
+
+**Code dans le n° de rapport** : par défaut, vos initiales (Romuald TEST → `RT-261007-01`).
+Deux techniciens n'ont ainsi jamais le même numéro le même jour. Si un collègue a les mêmes
+initiales que vous, choisissez un autre code (2 à 4 lettres ou chiffres) dans le même écran.
+
+## 2 bis. Importer les réglages d'équipe (une seule fois)
+
+L'adresse du responsable SAV et les autres réglages communs ne sont **pas** dans
+l'application publiée. Le responsable fournit un fichier `reglages-equipe-AAAA-MM-JJ.json`
+(créé depuis son téléphone : ☰ → Réglages → **Exporter les réglages d'équipe**).
+
+Dans l'application : **☰ → Réglages → Réglages d'équipe → Importer les réglages d'équipe**,
+puis choisir le fichier. Vos informations personnelles ne sont pas touchées.
+
 ## 3. Charger la liste des clients (une seule fois)
 
 La liste des clients n'est **pas** dans l'application publiée : chacun la charge sur son
