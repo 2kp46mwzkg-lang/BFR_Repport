@@ -1,3 +1,80 @@
+# « Travaux terminés » — 15/10/2026
+
+- **L'appli « oubliait » le choix Travaux terminés.** La correction automatique du
+  français, lancée à chaque Aperçu PDF et à chaque Soumettre, traitait ce choix comme un
+  texte et lui ajoutait un point : « Oui » devenait « Oui. ». La liste ne reconnaissait plus
+  la valeur et réaffichait « — choisir — ». Le correcteur (et la traduction automatique) ne
+  touchent plus à ce champ, et les rapports déjà abîmés (« Oui. ») retrouvent leur choix à
+  l'ouverture.
+- **« Travaux terminés » et « Fait le » apparaissent enfin dans le rapport** (ils étaient
+  enregistrés mais jamais imprimés) : en tête de la partie Validation, juste au-dessus des
+  signatures (Oui en vert, Partiellement en orange, Non en rouge), et dans la synthèse.
+  Traduits dans les 6 langues ; variables {{travauxTermines}} et {{faitLe}} pour l'e-mail.
+
+# Pied de page — 15/10/2026
+
+- Le pied de page du PDF et du Word n'indique plus que **BFR SYSTEMS — 50 allée des
+  érables, 01150 Blyes, France** (le siège social de Coulommiers est retiré).
+- Réglages → Compte rendu : les deux champs « siège / 2e site » sont remplacés par
+  **« Adresse(s) du pied de page »** (une ligne par adresse, deux au plus ; vide = Blyes).
+  Ce réglage fait partie des réglages d'équipe.
+- Le pied de page du Word est traduit dans la langue du client, comme celui du PDF.
+
+# Dictée — 15/10/2026
+
+- **La dictée ne s'arrête plus quand on se tait.** Le moteur de reconnaissance du
+  téléphone coupe après quelques secondes de silence ; l'appli le relance aussitôt, sans
+  perdre le texte. On a donc le temps de réfléchir entre deux phrases, et la dictée ne
+  s'arrête qu'en touchant **« Arrêter la dictée »**.
+- Témoin rouge « À l'écoute » sous les boutons tant que la dictée est active.
+- On peut corriger le texte à la main pendant l'écoute : la suite de la dictée s'ajoute
+  après la correction, sans l'écraser ni doubler de mots.
+- Garde-fous : arrêt si le micro est refusé ou absent (message explicite), mise en pause si
+  le téléphone refuse les relances en boucle, arrêt en quittant l'étape Annotation, arrêt
+  après 3 minutes sans aucune parole (téléphone oublié dans la poche).
+
+# Travaux réalisés et constats — 15/10/2026
+
+Un rapport SAV ne se mélange plus avec un audit.
+
+- **Chaque évènement a une nature**, choisie en haut de la première étape de l'assistant :
+  - 🔧 **Travail réalisé** (ce que le technicien a fait) : pas de priorité, mais un
+    **résultat** à l'étape 4 — **Terminé** (travail prévu : entretien, remplacement
+    planifié…) / Résolu / Partiellement résolu / À surveiller (dépannage) ;
+  - 🔍 **Constat** (ce qu'il a observé) : les priorités habituelles (Sécurité, Urgent,
+    Haute, Basse, Informatif) et une case **« Corrigé sur place »** (mention verte
+    « Corrigé sur place pendant l'intervention » dans le rapport).
+- **Type d'intervention** dans la fiche Client & machine : SAV / dépannage, Audit,
+  SAV + audit. Il donne le titre du rapport (« Compte rendu d'intervention »,
+  « Rapport d'audit », « Compte rendu d'intervention et d'audit »), l'ordre des parties
+  et la nature proposée par défaut dans l'assistant (SAV → travail, audit → constat,
+  SAV + audit → la même que le dernier évènement).
+  - SAV : Synthèse → Travaux réalisés → Points relevés (tous les constats, les plus
+    prioritaires d'abord) → Travaux à prévoir → Pièces → Photos → Validation ;
+  - Audit : Synthèse → constats par priorité → Travaux réalisés → … ;
+  - SAV + audit : Synthèse → Travaux réalisés → Constats — Sécurité et urgences /
+    Priorité haute / Priorité basse / Informations complémentaires → ….
+  Le champ « Travaux réalisés » du compte rendu devient le résumé imprimé en tête de la
+  partie Travaux réalisés.
+- **Écran principal** : deux listes, « Travaux réalisés (n) » et « Constats (n) ». Chaque
+  carte a un bouton **« En travail » / « En constat »** pour reclasser un évènement d'un
+  appui (pratique pour les « Informatif » qui décrivaient en fait un travail).
+- Synthèse du rapport : case verte « Travaux réalisés » + ligne « Constats corrigés sur
+  place » ; les compteurs de priorités ne comptent que les constats.
+- Les anciens rapports ne changent pas (leurs évènements sont des constats, plan standard)
+  tant qu'on n'y ajoute pas de travail réalisé.
+- Traductions des nouveaux libellés (EN, DE, NL, ES, IT, PT) ; les titres de parties
+  renumérotés (« 3. Points de priorité haute ») sont de nouveau traduits.
+
+Corrections
+- Après avoir écrit dans un champ du compte rendu (Travaux réalisés, à prévoir…), le premier
+  appui sur « Soumettre », « Word » ou « Aperçu PDF » était perdu (l'écran se redessinait
+  sous le doigt). Corrigé.
+- Le texte des cartes d'évènements prenait la hauteur minimale de la zone de saisie
+  (cartes inutilement hautes). Corrigé.
+- Aperçu débrief d'un évènement : les retours à la ligne du texte sont respectés.
+- Word : propriétés de texte écrites dans l'ordre attendu par Word (fichier plus robuste).
+
 # Correction et nouveautés du 14/10/2026
 
 - **Dossier photos (.zip)** : bouton « Toutes les photos — dossier .zip » sous Soumettre le

@@ -14,6 +14,7 @@ Action ne publie alors pas la nouvelle version).
 """
 import asyncio
 import functools
+import html
 import http.server
 import io
 import json
@@ -111,11 +112,18 @@ class Telephone:
         await pg.wait_for_timeout(400)
         await self.fermer_feuilles()
 
-    async def evenement(self, texte, photos=(), categorie=0):
+    async def evenement(self, texte, photos=(), categorie=None, nature=None, resultat=None, corrige=False):
+        """Ajoute un évènement. nature : 'travail' ou 'constat' (sinon celle proposée
+        par l'appli ; une catégorie donnée implique un constat)."""
         pg = self.pg
+        if nature is None and categorie is not None:
+            nature = 'constat'
         await self.fermer_feuilles()
         await pg.click('#btnAjouter')
         await pg.wait_for_timeout(300)
+        if nature:
+            await pg.click('[data-nature="%s"]' % nature)
+            await pg.wait_for_timeout(150)
         await pg.click('[data-domaine] >> nth=0')
         await pg.wait_for_timeout(200)
         await pg.fill('#evTexte', texte)
@@ -131,8 +139,14 @@ class Telephone:
                 await pg.wait_for_timeout(500)
         await pg.click('.assistant-nav [data-a="suivant"]')
         await pg.wait_for_timeout(200)
+        if resultat and await pg.query_selector('[data-resultat="%s"]' % resultat):
+            await pg.click('[data-resultat="%s"]' % resultat)
+            await pg.wait_for_timeout(200)
+        if corrige and await pg.query_selector('#evCorrige'):
+            await pg.check('#evCorrige')
+            await pg.wait_for_timeout(100)
         cats = await pg.query_selector_all('[data-categorie]')
-        if cats:
+        if cats and categorie is not None:
             await cats[min(categorie, len(cats) - 1)].click()
             await pg.wait_for_timeout(200)
         if await pg.query_selector('.assistant-bar'):
@@ -239,16 +253,29 @@ async def test_rapport_pdf_et_word(nav, adresse):
     await pg.click('[data-a="sauvegarder-piece"]')
     await pg.wait_for_timeout(500)
     verifier(await pg.query_selector('#cardPieces img'), 'la photo de la pièce n\'apparaît pas dans l\'écran')
+    await pg.select_option('[data-k="travauxTermines"]', 'Partiellement')
+    await pg.wait_for_timeout(1000)
     chemin_docx = await t.telecharger('[data-a="word"] >> visible=true >> nth=0')
     await pg.click('[data-a="soumettre"] >> visible=true >> nth=0')   # confirmations auto
     await pg.wait_for_selector('[data-a="dl"]', timeout=30000)
     chemin_pdf = await t.telecharger('[data-a="dl"] >> visible=true')
+    # « Travaux terminés » survit à la correction automatique faite à la soumission
+    await pg.wait_for_timeout(1000)
+    verifier((await t.rapport_stocke()).get('travauxTermines') == 'Partiellement',
+             'Travaux terminés modifié à la soumission : %r' % (await t.rapport_stocke()).get('travauxTermines'))
+    await t.fermer_feuilles()
+    verifier(await pg.input_value('[data-k="travauxTermines"]') == 'Partiellement',
+             'la liste « Travaux terminés » ne montre plus le choix après la soumission')
 
     texte = '\n'.join(page.extract_text() or '' for page in PdfReader(chemin_pdf).pages)
     numeros = [int(n) for n in re.findall(r'(?m)^\s*(\d+)\. [A-ZÉÈ]', texte)]
     uniques = sorted(set(numeros))
     verifier(uniques == list(range(1, len(uniques) + 1)), 'sections non numérotées en continu : %s' % numeros)
     verifier('Machine (N° série)' in texte or 'MACHINE (N° SÉRIE)' in texte.upper(), 'colonne machine des pièces absente du PDF')
+    plat = re.sub(r'\s+', ' ', texte)
+    verifier(re.search(r'Travaux terminés\s*:\s*Partiellement', plat), '« Travaux terminés : Partiellement » absent du PDF')
+    # pied de page : le site de Blyes seulement, pas le siège social
+    verifier('01150 Blyes' in texte and 'Coulommiers' not in texte, 'pied de page du PDF : site de Blyes seul attendu')
     # photo de la pièce dans le PDF : vignette convertie en 500 px de large
     largeurs = set()
     for page in PdfReader(chemin_pdf).pages:
@@ -271,6 +298,10 @@ async def test_rapport_pdf_et_word(nav, adresse):
         verifier(utilisees <= declarees, 'images du Word non déclarées : %s' % (utilisees - declarees))
         verifier(len(utilisees) >= 4, 'Word : 4 photos attendues (3 d\'évènements + 1 de pièce), %d trouvées' % len(utilisees))
         verifier(all(('word/' + c) in z.namelist() for c in cibles), 'image du Word manquante dans le fichier')
+        doc_texte = html.unescape(re.sub(r'<[^>]+>', '', doc))
+        verifier('Travaux terminés : Partiellement' in doc_texte, '« Travaux terminés : Partiellement » absent du Word')
+        pieds = ''.join(z.read(n).decode('utf-8') for n in z.namelist() if re.match(r'word/footer\d*\.xml$', n))
+        verifier('01150 Blyes' in pieds and 'Coulommiers' not in pieds, 'pied de page du Word : site de Blyes seul attendu')
 
     # dossier .zip de toutes les photos de l'intervention
     await t.fermer_feuilles()
@@ -285,6 +316,13 @@ async def test_rapport_pdf_et_word(nav, adresse):
         verifier('Liste-des-photos.csv' in noms, 'index des photos absent')
         index = z.read('Liste-des-photos.csv').decode('utf-8-sig')
         verifier('Joint de vérin' in index and 'JV-42' in index, 'index des photos incomplet')
+    # rapport enregistré par une ancienne version (« Oui. ») : le choix est retrouvé
+    await pg.evaluate('''() => { const r = JSON.parse(localStorage["sav3.rapport"]);
+      r.travauxTermines = "Oui."; localStorage["sav3.rapport"] = JSON.stringify(r); }''')
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(1500)
+    await t.fermer_feuilles()
+    verifier(await pg.input_value('[data-k="travauxTermines"]') == 'Oui', 'valeur « Oui. » d\'une ancienne version non retrouvée')
     await t.fermer()
     return t
 
@@ -366,8 +404,195 @@ async def test_reglages(nav, adresse):
     return t
 
 
+async def test_sav_et_audit(nav, adresse):
+    """Travaux réalisés et constats séparés, type d'intervention, bouton de bascule."""
+    t = await Telephone(nav, adresse).ouvrir()
+    pg = t.pg
+    await t.identite()
+    await t.client()
+    verifier((await t.rapport_stocke()).get('typeIntervention') == 'sav',
+             'un nouveau rapport doit être de type « SAV / dépannage »')
+    # assistant : en SAV, « Travail réalisé » est proposé d'office
+    await pg.click('#btnAjouter')
+    await pg.wait_for_timeout(300)
+    verifier(await pg.query_selector('.nature.travail.on'), 'en SAV, l\'assistant doit proposer « Travail réalisé »')
+    await pg.click('.assistant-bar [data-a="fermer"]')
+    await pg.wait_for_timeout(300)
+    verifier(len((await t.rapport_stocke()).get('evenements', [])) == 0, 'un évènement abandonné vide doit disparaître')
+    # passage en « SAV + audit »
+    await pg.click('[data-a="editer-client"] >> nth=0')
+    await pg.wait_for_timeout(400)
+    await pg.select_option('.sheet.open [data-fk="typeIntervention"]', 'mixte')
+    await pg.click('.sheet.open [data-a="ok"]')
+    await pg.wait_for_timeout(400)
+    await t.fermer_feuilles()
+    await t.evenement('Remplacement de la courroie et réglage de la tension.', ['paysage-1.jpg'],
+                      nature='travail', resultat='resolu')
+    await t.evenement('Vidange préventive du groupe hydraulique, prévue au planning.', [],
+                      nature='travail', resultat='termine')
+    await t.evenement('Capot de protection absent sur la transmission.', [], categorie=0, corrige=True)
+    await t.evenement('Roulement bruyant côté moteur.', [], categorie=2)
+    await t.evenement('Graissage des paliers effectué.', [], categorie=4)
+    # le dernier, saisi comme « Informatif », est en fait un travail : bouton de bascule
+    await pg.wait_for_timeout(1000)   # enregistrement différé (0,8 s)
+    r = await t.rapport_stocke()
+    graissage = [e for e in r['evenements'] if e['texte'].startswith('Graissage')][0]
+    verifier(graissage.get('nature') == 'constat', 'le graissage doit d\'abord être un constat')
+    await pg.click('[data-ev="%s"] [data-a="basculer-nature"]' % graissage['id'])
+    await pg.wait_for_timeout(1200)
+    verifier(not await pg.query_selector('.assistant'), 'le bouton de bascule ne doit pas ouvrir l\'assistant')
+    r = await t.rapport_stocke()
+    natures = {e['texte'].split()[0]: e.get('nature') for e in r['evenements']}
+    verifier(natures.get('Graissage') == 'travail', 'bascule en travail non enregistrée : %s' % natures)
+    nb_travaux = await pg.inner_text('.ev-groupe-titre.travaux .compte')
+    nb_constats = await pg.inner_text('.ev-groupe-titre.constats .compte')
+    verifier((nb_travaux, nb_constats) == ('3', '2'), 'listes séparées attendues 3 + 2 : %s + %s' % (nb_travaux, nb_constats))
+    vidange = [e for e in r['evenements'] if e['texte'].startswith('Vidange')][0]
+    verifier(vidange.get('resultat') == 'termine', 'résultat « Terminé » non enregistré : %r' % vidange.get('resultat'))
+    corrige = [e for e in r['evenements'] if e['texte'].startswith('Capot')][0]
+    verifier(corrige.get('corrige') is True, '« Corrigé sur place » non enregistré')
+    await pg.fill('[data-k="actions"]', 'Remise en état de la transmission.')
+    await pg.wait_for_timeout(300)
+
+    chemin_docx = await t.telecharger('[data-a="word"] >> visible=true >> nth=0')
+    await pg.click('[data-a="soumettre"] >> visible=true >> nth=0')
+    await pg.wait_for_selector('[data-a="dl"]', timeout=30000)
+    chemin_pdf = await t.telecharger('[data-a="dl"] >> visible=true')
+    texte = '\n'.join(page.extract_text() or '' for page in PdfReader(chemin_pdf).pages)
+    plat = re.sub(r'\s+', ' ', texte).upper()
+    verifier("COMPTE RENDU D'INTERVENTION ET D'AUDIT" in plat.replace('’', "'"), 'titre « SAV + audit » absent du PDF')
+    i_travaux = plat.find('. TRAVAUX RÉALISÉS')
+    i_constats = plat.find('. CONSTATS — SÉCURITÉ')
+    verifier(0 <= i_travaux < i_constats, 'la partie Travaux réalisés doit précéder les constats (%d, %d)' % (i_travaux, i_constats))
+    verifier('REMISE EN ÉTAT DE LA TRANSMISSION' in plat[i_travaux:i_constats], 'résumé des travaux absent de leur partie')
+    verifier('GRAISSAGE DES PALIERS' in plat[i_travaux:i_constats], 'le travail basculé doit être dans la partie Travaux')
+    verifier('RÉSULTAT : RÉSOLU' in plat, 'résultat du travail absent du PDF')
+    verifier('RÉSULTAT : TERMINÉ' in plat[i_travaux:i_constats], 'résultat « Terminé » (travail prévu) absent du PDF')
+    verifier("CORRIGÉ SUR PLACE PENDANT L'INTERVENTION" in plat.replace('’', "'"), 'mention « corrigé sur place » absente du PDF')
+    numeros = [int(n) for n in re.findall(r'(?m)^\s*(\d+)\. [A-ZÉÈ]', texte)]
+    uniques = sorted(set(numeros))
+    verifier(uniques == list(range(1, len(uniques) + 1)), 'sections non numérotées en continu : %s' % numeros)
+    with zipfile.ZipFile(chemin_docx) as z:
+        verifier(z.testzip() is None, 'fichier Word corrompu')
+        doc = html.unescape(re.sub(r'<[^>]+>', '', z.read('word/document.xml').decode('utf-8')))
+        for attendu in ("Compte rendu d'intervention et d'audit", 'Travaux réalisés', 'Résultat : Résolu', 'Résultat : Terminé',
+                        "Corrigé sur place pendant l'intervention", 'Constats — Sécurité et urgences'):
+            verifier(attendu in doc, 'Word : « %s » absent' % attendu)
+        verifier(doc.find('Travaux réalisés') < doc.find('Constats — Sécurité'), 'Word : ordre des parties incorrect')
+    # en audit, l'assistant propose « Constat »
+    await t.fermer_feuilles()
+    await pg.click('[data-a="editer-client"] >> nth=0')
+    await pg.wait_for_timeout(400)
+    await pg.select_option('.sheet.open [data-fk="typeIntervention"]', 'audit')
+    await pg.click('.sheet.open [data-a="ok"]')
+    await pg.wait_for_timeout(400)
+    await t.fermer_feuilles()
+    await pg.click('#btnAjouter')
+    await pg.wait_for_timeout(300)
+    verifier(await pg.query_selector('.nature.constat.on'), 'en audit, l\'assistant doit proposer « Constat »')
+    await pg.click('.assistant-bar [data-a="fermer"]')
+    await t.fermer()
+    return t
+
+
+# Faux moteur de reconnaissance vocale : le test décide de ce qui est « entendu »
+# et quand le navigateur coupe la session (silence), comme sur un téléphone.
+FAUX_MICRO = """
+window.__recs = [];
+class FauxMicro {
+  constructor() { window.__recs.push(this); this.actif = false; }
+  start() { if (window.__refusRelance && window.__recs.length > 1) throw new Error('refus'); this.actif = true; }
+  stop() { if (!this.actif) return; this.actif = false; setTimeout(() => this.onend && this.onend(), 10); }
+  abort() { this.stop(); }
+  dire(morceaux) {
+    const results = morceaux.map(([t, f]) => { const r = [{ transcript: t }]; r.isFinal = f; return r; });
+    this.onresult && this.onresult({ results: results, resultIndex: 0 });
+  }
+  silence() {
+    this.actif = false;
+    this.onerror && this.onerror({ error: 'no-speech' });
+    this.onend && this.onend();
+  }
+}
+window.SpeechRecognition = FauxMicro; window.webkitSpeechRecognition = FauxMicro;
+window.__dernier = () => window.__recs[window.__recs.length - 1];
+"""
+
+
+async def test_dictee(nav, adresse):
+    """La dictée continue après un silence ; elle ne s'arrête qu'avec le bouton."""
+    t = await Telephone(nav, adresse).ouvrir()
+    pg = t.pg
+    await t.identite()
+    await pg.add_init_script(FAUX_MICRO)
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(800)
+    await t.fermer_feuilles()
+    await pg.click('#btnAjouter')
+    await pg.wait_for_timeout(300)
+    await pg.click('[data-nature="constat"]')
+    await pg.click('[data-domaine] >> nth=0')
+    await pg.wait_for_timeout(300)
+    await pg.click('[data-a="dictee"]')
+    await pg.wait_for_timeout(200)
+    verifier(await pg.query_selector('.dictee-active'), 'le témoin « À l\'écoute » doit s\'afficher')
+    await pg.evaluate('() => __dernier().dire([["courroie détendue", true]])')
+    # le navigateur coupe après un silence : la dictée doit repartir toute seule
+    await pg.evaluate('() => __dernier().silence()')
+    await pg.wait_for_timeout(400)
+    nb = await pg.evaluate('() => __recs.length')
+    verifier(nb == 2, 'la dictée doit être relancée après un silence (%d session(s))' % nb)
+    verifier('Arrêter la dictée' in await pg.inner_text('[data-a="dictee"]'), 'le bouton doit rester sur « Arrêter la dictée »')
+    await pg.evaluate('() => __dernier().dire([["traces de patinage sur la poulie", true]])')
+    texte = await pg.input_value('#evTexte')
+    verifier(texte.startswith('courroie détendue') and texte.endswith('traces de patinage sur la poulie'),
+             'les phrases dictées avant et après la pause doivent se suivre : %r' % texte)
+    # correction à la main pendant l'écoute, puis la suite de la dictée s'y ajoute
+    await pg.fill('#evTexte', 'Courroie détendue (flèche 12 mm).')
+    await pg.evaluate('() => __dernier().dire([["traces de patinage sur la poulie", true], ["bruit au démarrage", true]])')
+    texte = await pg.input_value('#evTexte')
+    verifier(texte == 'Courroie détendue (flèche 12 mm). bruit au démarrage',
+             'correction à la main écrasée ou doublon : %r' % texte)
+    # arrêt par le bouton : plus de relance
+    await pg.click('[data-a="dictee"]')
+    await pg.wait_for_timeout(400)
+    verifier(await pg.evaluate('() => __recs.length') == 2, 'aucune relance après « Arrêter la dictée »')
+    verifier('Dicter' in await pg.inner_text('[data-a="dictee"]'), 'le bouton doit revenir sur « Dicter »')
+    verifier(not await pg.query_selector('.dictee-active'), 'le témoin d\'écoute doit disparaître')
+    # relances impossibles (téléphone qui refuse) : arrêt propre, texte conservé
+    await pg.click('[data-a="dictee"]')
+    await pg.wait_for_timeout(200)
+    await pg.evaluate('() => { window.__refusRelance = true; __dernier().silence(); }')
+    await pg.wait_for_timeout(1200)
+    verifier('Dicter' in await pg.inner_text('[data-a="dictee"]'), 'relance refusée : la dictée doit se mettre en pause')
+    verifier((await pg.input_value('#evTexte')).startswith('Courroie détendue'), 'texte perdu après l\'échec de relance')
+    # sessions qui s'arrêtent aussitôt sans rien entendre, en boucle : pause au bout de 4
+    await pg.evaluate('() => { window.__refusRelance = false; }')
+    await pg.click('[data-a="dictee"]')
+    await pg.wait_for_timeout(100)
+    for _ in range(4):
+        await pg.evaluate('() => __dernier().silence()')
+        await pg.wait_for_timeout(750)
+    verifier('Dicter' in await pg.inner_text('[data-a="dictee"]'), 'relances en boucle : la dictée doit se mettre en pause')
+    # changer d'étape arrête la dictée
+    await pg.click('[data-a="dictee"]')
+    await pg.wait_for_timeout(200)
+    avant = await pg.evaluate('() => __recs.length')
+    await pg.click('.assistant-nav [data-a="suivant"]')
+    await pg.wait_for_timeout(300)
+    await pg.evaluate('() => __dernier().onend && __dernier().onend()')
+    await pg.wait_for_timeout(300)
+    verifier(await pg.evaluate('() => __recs.length') == avant, 'la dictée doit s\'arrêter en quittant l\'étape Annotation')
+    await pg.click('.assistant-bar [data-a="enregistrer"]')
+    await pg.wait_for_timeout(1200)
+    ev = (await t.rapport_stocke())['evenements'][0]
+    verifier(ev['texte'].startswith('Courroie détendue (flèche 12 mm).'), 'texte dicté non enregistré : %r' % ev['texte'])
+    await t.fermer()
+    return t
+
+
 TESTS = [test_identite_et_numeros, test_photos_conservees, test_rapport_pdf_et_word,
-         test_historique_et_menage, test_reglages]
+         test_historique_et_menage, test_reglages, test_sav_et_audit, test_dictee]
 # BFR_TEST=nom_du_test : ne lancer qu'un seul test (ex. BFR_TEST=test_rapport_pdf_et_word)
 if os.environ.get('BFR_TEST'):
     TESTS = [f for f in TESTS if f.__name__ == os.environ['BFR_TEST']]

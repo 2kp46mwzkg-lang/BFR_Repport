@@ -548,7 +548,9 @@
          logo n'a été choisi dans les réglages. */
       logo: (typeof window !== 'undefined' && window.LOGO_BFR) || '',
       lieuLettre: 'Blyes',                 // « À Blyes, le … »
-      siege1: '', siege2: ''               // adresses du pied de page (celles du modèle par défaut)
+      // adresse(s) du pied de page, une par ligne ; vide = site de Blyes
+      piedPage: '',
+      siege1: '', siege2: ''               // anciens réglages (repris s'ils avaient été saisis)
     },
     technicien: { prenom: '', nom: '', fonction: 'Technicien SAV', tel: '', email: '', signature: '' },
     mail: {
@@ -753,7 +755,7 @@
   let R = fusion(nouvelleIntervention(), rapportStocke);
   /* numeroAuto : numéro généré par l'appli, recalculé si le code technicien change
      (jamais pour un rapport existant ou dont le numéro a été saisi à la main). */
-  if (!rapportStocke.id) R.numeroAuto = true;
+  if (!rapportStocke.id) { R.numeroAuto = true; R.typeIntervention = 'sav'; }
   if (!R.evenements) R.evenements = [];
   if (!Array.isArray(R.pieces)) R.pieces = [];
   if (!R.trajet || typeof R.trajet !== 'object') {
@@ -1072,6 +1074,7 @@
               ${recapMachines}
               <div><span>Contact</span><strong>${esc(c.contact || '—')}${c.tel ? ' · ' + esc(c.tel) : ''}</strong></div>
               ${recapTechs}
+              <div><span>Type</span><strong>${esc((Report.TYPES_INTERVENTION[R.typeIntervention] || {}).libelle || 'Non précisé')}</strong></div>
               <div><span>Objet</span><strong>${esc(R.objet || '—')}</strong></div>
               <div><span>Langue du rapport</span><strong>${R.langue.active && R.langue.code
                 ? 'français + ' + esc(I18N.natif(R.langue.code))
@@ -1087,24 +1090,54 @@
       </div>`;
   }
 
+  /* Couleurs et libellé d'un évènement : vert « Travail réalisé », ou la catégorie
+     (priorité) d'un constat. */
+  const STYLE_TRAVAIL = { couleur: '#15803d', fond: '#dcfce7' };
+  const FONDS_RESULTAT = { termine: '#ccfbf1', resolu: '#dcfce7', partiel: '#ffedd5', surveiller: '#fef3c7' };
+  function styleEvenement(ev) {
+    if (Report.estTravail(ev)) {
+      return { couleur: STYLE_TRAVAIL.couleur, fond: STYLE_TRAVAIL.fond, libelle: 'Travail réalisé',
+        ico: (ICO.wrench && ICO.wrench(16)) || '🔧' };
+    }
+    const cat = catDe(ev.categorie);
+    return { couleur: cat.couleur, fond: cat.fond, libelle: cat.libelle,
+      ico: (ICO.categorie && ICO.categorie(cat.id || cat.icone, 16)) || '' };
+  }
+  /* Pastille sous le texte : résultat du travail, ou « corrigé sur place ». */
+  function mentionCarte(ev) {
+    if (Report.estTravail(ev)) {
+      const r = Report.RESULTATS[ev.resultat];
+      return r ? `<span class="ev-mention" style="--c:${r.couleur};--f:${FONDS_RESULTAT[ev.resultat]}">Résultat : ${esc(r.libelle)}</span>` : '';
+    }
+    return ev.corrige ? `<span class="ev-mention">✓ Corrigé pendant l'intervention</span>` : '';
+  }
+
   function carteEvenement(ev, i) {
-    const cat = catDe(ev.categorie), dom = domDe(ev.domaine);
+    const st = styleEvenement(ev), dom = domDe(ev.domaine);
+    const travail = Report.estTravail(ev);
     const texte = Report.valeur(ev.texte);
-    return `<div class="ev-carte" data-ev="${ev.id}" style="--c:${cat.couleur};--f:${cat.fond}">
+    return `<div class="ev-carte${travail ? ' travail' : ''}" data-ev="${ev.id}" style="--c:${st.couleur};--f:${st.fond}">
       <div class="ev-tete">
         <span class="ev-dom">${(ICO.domaine && ICO.domaine(dom.id || dom.icone, 16)) || ''} ${esc(dom.libelle)}</span>
         ${ev.machineNom ? `<span class="pill" style="background:var(--bfr-primary-light);color:var(--bfr-secondary);font-weight:600;border:1px solid var(--bfr-primary-border)">${(ICO.gear && ICO.gear(13)) || ''} ${esc(ev.machineNom)}</span>` : ''}
-        <span class="ev-cat">${(ICO.categorie && ICO.categorie(cat.id || cat.icone, 16)) || ''} ${esc(cat.libelle)}</span>
+        <span class="ev-cat">${st.ico} ${esc(st.libelle)}</span>
         <span class="ev-heure">${esc(Report.heureFr(ev.heure))}</span>
       </div>
       <div class="ev-corps">
         ${(ev.photos || []).filter(p => p && p.dataUrl).length ? `<div class="ev-vignettes">${ev.photos.filter(p => p && p.dataUrl).slice(0, 3).map(p => `<img src="${p.dataUrl}" alt="">`).join('')}</div>` : ''}
-        <p class="ev-texte">${texte ? esc(texte.length > 180 ? texte.slice(0, 180) + '…' : texte) : '<em>Annotation à compléter…</em>'}</p>
+        <div class="ev-texte-bloc">
+          <p class="ev-texte">${texte ? esc(texte.length > 180 ? texte.slice(0, 180) + '…' : texte) : '<em>Annotation à compléter…</em>'}</p>
+          ${mentionCarte(ev)}
+        </div>
       </div>
       <div class="ev-pied">
         ${(ev.photos || []).length ? `<span class="pill">${ev.photos.length} photo(s)</span>` : '<span class="pill">sans photo</span>'}
         ${!ev.texte ? '<span class="pill surv">texte manquant</span>' : ''}
         <div class="ev-actions-pied">
+          <button type="button" class="btn-ev-pill basculer" data-a="basculer-nature" data-id="${ev.id}"
+            title="${travail ? 'Classer cet évènement dans les constats' : 'Classer cet évènement dans les travaux réalisés'}">${travail
+              ? ((ICO.eye && ICO.eye(13)) || '') + ' En constat'
+              : ((ICO.wrench && ICO.wrench(13)) || '') + ' En travail'}</button>
           <button type="button" class="btn-ev-pill apercu" data-a="apercu-ev" data-id="${ev.id}" title="Aperçu débrief client">${(ICO.eye && ICO.eye(13)) || ''} Aperçu</button>
           <button type="button" class="btn-ev-pill modifier" data-a="modifier-ev" data-id="${ev.id}" title="Modifier cet évènement">${(ICO.pen && ICO.pen(13)) || ''} Modifier</button>
         </div>
@@ -1116,17 +1149,34 @@
     const zone = $('#zoneEvenements');
     if (!zone) return;
     const evs = R.evenements.slice().sort((a, b) => new Date(a.heure || 0) - new Date(b.heure || 0));
+    const travaux = evs.filter(x => Report.estTravail(x));
+    const constats = evs.filter(x => !Report.estTravail(x));
+    /* Deux listes dès qu'il y a un travail réalisé ou un type d'intervention ;
+       un ancien rapport sans travaux garde sa liste unique. */
+    const separer = travaux.length > 0 || !!R.typeIntervention;
+    const groupe = (cls, ico, titre, liste, vide) =>
+      `<div class="ev-groupe-titre ${cls}">${ico} ${titre} <span class="compte">${liste.length}</span></div>` +
+      (liste.length ? `<div class="ev-liste">${liste.map(carteEvenement).join('')}</div>` : `<p class="hint">${vide}</p>`);
+    const blocTravaux = groupe('travaux', (ICO.wrench && ICO.wrench(16)) || '🔧', 'Travaux réalisés', travaux,
+      'Aucun travail réalisé pour l\'instant.');
+    const blocConstats = groupe('constats', (ICO.eye && ICO.eye(16)) || '🔍', 'Constats', constats,
+      'Aucun constat pour l\'instant.');
     zone.innerHTML = `
       <div class="card">
         <h2>Évènements <span class="pill compteur-ev">0</span></h2>
-        <p class="hint">Chaque constat, défaut ou information relevée sur la machine. Appuyez sur un évènement pour le compléter ou le corriger à tout moment.</p>
-        ${e.securite ? `<div class="alerte-securite">${(ICO.shieldAlert && ICO.shieldAlert(18)) || ''} ${e.securite} point(s) de sécurité ou d'urgence — ils apparaîtront en tête du rapport.</div>` : ''}
-        ${evs.length ? `<div class="ev-liste">${evs.map(carteEvenement).join('')}</div>`
-          : `<div class="ev-vide">
+        <p class="hint">${separer
+          ? '<strong>Travaux réalisés</strong> : ce que vous avez fait. <strong>Constats</strong> : ce que vous avez observé, avec une priorité. Appuyez sur un évènement pour le compléter ; « En travail / En constat » le change de liste.'
+          : 'Chaque constat, défaut ou information relevée sur la machine. Appuyez sur un évènement pour le compléter ou le corriger à tout moment.'}</p>
+        ${e.securite ? `<div class="alerte-securite">${(ICO.shieldAlert && ICO.shieldAlert(18)) || ''} ${e.securite} point(s) de sécurité ou d'urgence — ils apparaîtront en tête des constats.</div>` : ''}
+        ${!evs.length
+          ? `<div class="ev-vide">
                <span class="ev-vide-ico">${(ICO.fileText && ICO.fileText(36)) || ''}</span>
                <p>Aucun évènement pour l'instant.</p>
-               <p class="small">Commencez par le premier constat : domaine → annotation → photo → catégorie.</p>
-             </div>`}
+               <p class="small">Commencez par le premier : travail ou constat → annotation → photo → résultat ou catégorie.</p>
+             </div>`
+          : !separer
+            ? `<div class="ev-liste">${evs.map(carteEvenement).join('')}</div>`
+            : (R.typeIntervention === 'audit' ? blocConstats + blocTravaux : blocTravaux + blocConstats)}
       </div>`;
   }
 
@@ -1140,8 +1190,9 @@
         <h2>Compte rendu</h2>
         <div class="field"><label>Résumé / synthèse de l\'intervention</label>
           <textarea data-k="resumeTechnicien" rows="4" placeholder="Ex. Audit complet du groupe hydraulique : courroie détendue, roulement d'arbre principal en fin de vie. Remplacement de la courroie, graissage, essai en charge concluant.">${esc(R.resumeTechnicien)}</textarea></div>
-        <div class="field"><label>Travaux réalisés</label>
-          <textarea data-k="actions" rows="3" placeholder="Ex. Remplacement courroie XPB 2360, réglage tension, graissage des paliers…">${esc(R.actions)}</textarea></div>
+        <div class="field"><label>Travaux réalisés — résumé</label>
+          <textarea data-k="actions" rows="3" placeholder="Ex. Remplacement courroie XPB 2360, réglage tension, graissage des paliers…">${esc(R.actions)}</textarea>
+          <p class="small" style="margin-top:4px">Imprimé en tête de la partie « Travaux réalisés », avant le détail des travaux saisis en évènements.</p></div>
         <div class="field"><label>Travaux à prévoir (base du devis)</label>
           <textarea data-k="aPrevoir" rows="3" placeholder="Ex. Remplacer le roulement principal sous 48 h, 4 silentblocs…">${esc(R.aPrevoir)}</textarea></div>
         <div class="grid2">
@@ -1202,7 +1253,13 @@
   }
 
   function champSelect(cle, label, options) {
-    const v = getPath(R, cle) || '';
+    let v = getPath(R, cle) || '';
+    if (v && options.indexOf(v) < 0) {
+      // valeur abîmée par une ancienne version (« Oui. », « oui ») : on retrouve le choix
+      const net = String(v).trim().replace(/[.!\s]+$/, '').toLowerCase();
+      const trouve = options.find(o => o && o.toLowerCase() === net);
+      if (trouve) { v = trouve; setPath(R, cle, trouve); planifier(); }
+    }
     return `<div class="field"><label>${esc(label)}</label><select data-k="${cle}">
       ${options.map(o => `<option value="${esc(o)}"${v === o ? ' selected' : ''}>${esc(o || '— choisir —')}</option>`).join('')}</select></div>`;
   }
@@ -1496,10 +1553,31 @@
   }
 
   /* ===================== Évènements =================================== */
+  /* Nature proposée pour un nouvel évènement : travail en SAV, constat en audit ;
+     en « SAV + audit » (ou sans type), la même que le dernier évènement saisi. */
+  function natureParDefaut() {
+    if (R.typeIntervention === 'sav') return 'travail';
+    if (R.typeIntervention === 'audit') return 'constat';
+    const dernier = (R.evenements || []).filter(x => x.domaine)
+      .sort((a, b) => new Date(b.heure || 0) - new Date(a.heure || 0))[0];
+    return (dernier && Report.estTravail(dernier)) ? 'travail' : 'constat';
+  }
+
+  /* Bouton « En travail / En constat » d'une carte : reclasse l'évènement. */
+  function basculerNature(id) {
+    const ev = (R.evenements || []).find(x => x.id === id);
+    if (!ev) return;
+    ev.nature = Report.estTravail(ev) ? 'constat' : 'travail';
+    if (!ev.categorie) ev.categorie = 'INFO';
+    planifier(); rendreTout();
+    toast(ev.nature === 'travail' ? 'Classé dans les travaux réalisés' : 'Classé dans les constats');
+  }
+
   function ajouterEvenement() {
     synchroniserEntites();
     const machinesValides = (R.machines || []).filter(m => m && (m.designation || m.modele || m.serie));
     const ev = Assistant.nouvelEvenement({
+      nature: natureParDefaut(),
       machineId: (machinesValides.length === 1) ? machinesValides[0].id : '',
       machineNom: (machinesValides.length === 1) ? machinesValides[0].designation : ''
     });
@@ -1651,9 +1729,10 @@
     const evs = (R.evenements || []).slice().sort((a, b) => new Date(a.heure || 0) - new Date(b.heure || 0));
     const index = evs.findIndex(e => e.id === id) + 1;
     const total = evs.length;
-    const cat = catDe(ev.categorie), dom = domDe(ev.domaine);
+    const cat = styleEvenement(ev), dom = domDe(ev.domaine);
     const texte = Report.valeur(ev.texte) || '';
     const photos = (ev.photos || []).filter(p => p && p.dataUrl);
+    const mention = Report.mentionEvenement(ev);
 
     const overlay = document.createElement('div');
     overlay.className = 'assistant debrief-overlay';
@@ -1694,8 +1773,9 @@
           </div>
 
           <div class="debrief-commentaire-zone font-medium" id="debriefTexteBox">
-            <div class="debrief-comm-label">Observations &amp; Travaux réalisés :</div>
-            <div class="debrief-comm-contenu">${texte ? esc(texte).replace(/\\n/g, '<br>') : '<em style="color:#94a3b8">Aucune annotation rédigée pour cet évènement.</em>'}</div>
+            <div class="debrief-comm-label">${Report.estTravail(ev) ? 'Travail réalisé :' : 'Constat :'}</div>
+            <div class="debrief-comm-contenu">${texte ? esc(texte).replace(/\n/g, '<br>') : '<em style="color:#94a3b8">Aucune annotation rédigée pour cet évènement.</em>'}</div>
+            ${mention ? `<div style="margin-top:10px;font-weight:700;color:${mention.couleur}">${Report.estTravail(ev) ? '' : '✓ '}${esc(mention.texte)}</div>` : ''}
           </div>
 
           <div class="debrief-photos-section">
@@ -1884,6 +1964,13 @@
           </div>
           <button type="button" class="btn sm grey" id="btnAjouterTechnicien">+ Ajouter un collègue sur site</button>
         </div>
+        <div class="field"><label>Type d'intervention</label>
+          <select data-fk="typeIntervention">
+            ${R.typeIntervention ? '' : '<option value="" selected>Non précisé (plan standard)</option>'}
+            ${Object.keys(Report.TYPES_INTERVENTION).map(k => `<option value="${k}"${R.typeIntervention === k ? ' selected' : ''}>${esc(Report.TYPES_INTERVENTION[k].libelle)}</option>`).join('')}
+          </select></div>
+        <p class="small">Il donne le titre du rapport et l'ordre des parties : <strong>SAV</strong> → travaux réalisés d'abord ;
+          <strong>Audit</strong> → constats par priorité d'abord ; <strong>SAV + audit</strong> → une partie travaux puis une partie constats.</p>
         ${f('objet', 'Objet / demande du client', { ph: 'Ex. Audit mécanique suite à des bruits anormaux' })}
       </div>
       <div class="btnrow"><button class="btn grey" data-a="fermer">Fermer</button>
@@ -3127,7 +3214,7 @@
       (ev.photos || []).forEach((ph, j) => {
         if (!ph) return;
         out.push({ type: 'evenement', dataUrl: ph.dataUrl || '', numEv: k + 1, numPhoto: j + 1,
-          heure: ev.heure, domaine: etat.dom[ev.domaine] || ev.domaine || '', categorie: etat.cat[ev.categorie] || ev.categorie || '',
+          heure: ev.heure, domaine: etat.dom[ev.domaine] || ev.domaine || '', categorie: Report.estTravail(ev) ? 'Travail réalisé' : (etat.cat[ev.categorie] || ev.categorie || ''),
           machine: ev.machineNom || '', texte: ev.texte || '', legende: ph.legende || '' });
       });
     });
@@ -3333,9 +3420,12 @@
         <code>{{Mail_Tech}}</code> <code>{{Num_Tech}}</code> <code>{{Client_Adress}}</code> <code>{{Client_Contact}}</code>
         — dans l'application : nom du client, e-mail, <strong>téléphone</strong>, logo (vide si absent), date,
         technicien (mes informations), adresse et contact.</p>
-        <div class="grid2">${f('societe.lieuLettre', 'Ville de la lettre')}${f('societe.siege1', 'Adresse du siège (pied de page)')}</div>
-        ${f('societe.siege2', 'Adresse du 2e site (pied de page)')}
-        <p class="small">Vide = adresses du modèle : 1, rue du Jariel, 77120 Coulommiers — 50 allée des érables, 01150 Blyes.</p>
+        ${f('societe.lieuLettre', 'Ville de la lettre')}
+        <div class="field"><label>Adresse(s) du pied de page</label>
+          <textarea data-sk="societe.piedPage" rows="2" placeholder="50 allée des érables, 01150 Blyes, France">${esc(
+            (S.societe && S.societe.piedPage) || [S.societe && S.societe.siege1, S.societe && S.societe.siege2].filter(Boolean).join('\n'))}</textarea></div>
+        <p class="small">Imprimée sous « ${esc((S.societe && S.societe.nom) || 'BFR SYSTEMS')} » en bas de chaque page.
+          Une ligne par adresse (deux au plus). Vide = 50 allée des érables, 01150 Blyes, France.</p>
       </div>
 
       <div class="card"><h2>Liste clients & Annuaire</h2>
@@ -3501,7 +3591,9 @@
         }
         const b = e.target.closest('[data-a="enregistrer"]');
         if (!b) return;
-        ['societe.lieuLettre', 'societe.siege1', 'societe.siege2',
+        // l'ancien couple « siège / 2e site » est remplacé par « Adresse(s) du pied de page »
+        if ($('[data-sk="societe.piedPage"]', panneau)) { S.societe.siege1 = ''; S.societe.siege2 = ''; }
+        ['societe.lieuLettre', 'societe.piedPage',
          'societe.nom', 'societe.sigle', 'societe.sigleSuffixe', 'societe.adresse', 'societe.cpVille', 'societe.tel',
          'societe.email', 'societe.siteWeb', 'societe.siret', 'societe.tva',
          'mail.destinataireSAV', 'mail.assistantSAV', 'mail.destinatairesCopie', 'mail.objet'
@@ -4111,6 +4203,7 @@
             sauver(true);
             R = nouvelleIntervention();
             R.numeroAuto = true;
+            R.typeIntervention = 'sav';
             Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
             Store.set(K.rapport, R);
             // pas d'enregistrement en base tant que le rapport est vierge (voir rapportVierge)
@@ -4363,7 +4456,16 @@
     document.addEventListener('change', (e) => {
       const t = e.target;
       if (t.closest && t.closest('.sheet, .assistant')) return;
-      if (t.dataset && t.dataset.k) { setPath(R, t.dataset.k, t.value); planifier(); rendreTout(); }
+      if (t.dataset && t.dataset.k) {
+        setPath(R, t.dataset.k, t.value); planifier();
+        /* Un champ texte est déjà enregistré à la frappe. Le « change » d'un texte
+           arrive quand on touche ailleurs, par exemple le bouton « Soumettre » :
+           redessiner l'écran à ce moment remplaçait le bouton sous le doigt et le
+           premier appui était perdu. On ne redessine donc que pour les listes,
+           dates et cases. */
+        const texte = t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(text|email|tel|search|url|number)?$/.test(t.type || ''));
+        if (!texte) rendreTout();
+      }
     });
 
     document.addEventListener('click', (e) => {
@@ -4377,6 +4479,12 @@
       if (bModifier) {
         e.stopPropagation();
         editerEvenement(bModifier.dataset.id);
+        return;
+      }
+      const bBascule = e.target.closest('[data-a="basculer-nature"]');
+      if (bBascule) {
+        e.stopPropagation();
+        basculerNature(bBascule.dataset.id);
         return;
       }
       const carte = e.target.closest('[data-ev]');

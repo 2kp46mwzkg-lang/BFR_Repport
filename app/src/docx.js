@@ -165,16 +165,16 @@
       const morceaux = Array.isArray(texte) ? texte : [{ t: texte }];
       morceaux.forEach(function (m) {
         if (typeof m === 'string') m = { t: m };
+        // propriétés dans l'ordre du schéma Word : rFonts, b, i, color, sz
         const rpr = [];
-        const font = m.font || opt.font;
+        const font = m.mono ? 'Consolas' : (m.font || opt.font);
         if (font) rpr.push(`<w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}"/>`);
         if (m.gras || opt.gras) rpr.push('<w:b/>');
         if (m.italique || opt.italique) rpr.push('<w:i/>');
-        if (m.mono) rpr.push('<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/>');
-        const taille = m.taille || opt.taille;
-        if (taille) rpr.push(`<w:sz w:val="${Math.round(taille * 2)}"/>`);
         const couleur = m.couleur || opt.couleur;
         if (couleur) rpr.push(`<w:color w:val="${couleur}"/>`);
+        const taille = m.taille || opt.taille;
+        if (taille) rpr.push(`<w:sz w:val="${Math.round(taille * 2)}"/>`);
         runs.push(`<w:r>${rpr.length ? '<w:rPr>' + rpr.join('') + '</w:rPr>' : ''}` +
           (m.saut ? '<w:br/>' : '') +
           `<w:t xml:space="preserve">${x(traduire(m.t || '', langue))}</w:t></w:r>`);
@@ -261,22 +261,22 @@
             } catch (_) {}
           }
           if (!contenu) {
-            const rpr = [];
-            if (c.gras || (iL === 0 && opt.enteteGras)) rpr.push('<w:b/>');
-            if (c.couleur) rpr.push(`<w:color w:val="${c.couleur}"/>`);
-            if (c.taille) rpr.push(`<w:sz w:val="${Math.round(c.taille * 2)}"/>`);
             /* Une cellule contient soit du texte (multi-lignes), soit des « runs »
-               (tableau d'objets { t, gras, taille, couleur }) comme un paragraphe. */
+               (tableau d'objets { t, gras, taille, couleur }) comme un paragraphe.
+               Les propriétés du run complètent celles de la cellule ; elles sont écrites
+               dans l'ordre imposé par Word (b, i, color, sz), sans doublon. */
             const paragraphes = Array.isArray(c.texte) ? [c.texte] : String(c.texte == null ? '' : c.texte).split('\n');
             contenu = paragraphes.map(function (p) {
               const morceaux = Array.isArray(p) ? p : [{ t: p }];
               const runsCellule = morceaux.map(function (m) {
                 if (typeof m === 'string') m = { t: m };
-                const r2 = rpr.slice();
-                if (m.gras) r2.push('<w:b/>');
+                const r2 = [];
+                if (m.gras || c.gras || (iL === 0 && opt.enteteGras)) r2.push('<w:b/>');
                 if (m.italique) r2.push('<w:i/>');
-                if (m.taille) r2.push(`<w:sz w:val="${Math.round(m.taille * 2)}"/>`);
-                if (m.couleur) r2.push(`<w:color w:val="${m.couleur}"/>`);
+                const coul = m.couleur || c.couleur;
+                if (coul) r2.push(`<w:color w:val="${coul}"/>`);
+                const t2 = m.taille || c.taille;
+                if (t2) r2.push(`<w:sz w:val="${Math.round(t2 * 2)}"/>`);
                 return `<w:r>${r2.length ? '<w:rPr>' + r2.join('') + '</w:rPr>' : ''}` +
                   (m.saut ? '<w:br/>' : '') + `<w:t xml:space="preserve">${x(traduire(m.t || '', langue))}</w:t></w:r>`;
               }).join('');
@@ -387,7 +387,7 @@
       const lignes = (this.pied || []).filter(Boolean);
       if (!lignes.length && this.numeroPage === false) return null;
       const paragraphes = lignes.map((l, i) => '<w:p><w:pPr><w:spacing w:before="0" w:after="' + (i === lignes.length - 1 ? 0 : 20) + '"/><w:jc w:val="center"/></w:pPr>' +
-        `<w:r><w:rPr><w:rFonts w:ascii="Open Sans" w:hAnsi="Open Sans" w:cs="Open Sans"/><w:color w:val="808080"/><w:sz w:val="17"/></w:rPr><w:t xml:space="preserve">${x(l)}</w:t></w:r></w:p>`).join('');
+        `<w:r><w:rPr><w:rFonts w:ascii="Open Sans" w:hAnsi="Open Sans" w:cs="Open Sans"/><w:color w:val="808080"/><w:sz w:val="17"/></w:rPr><w:t xml:space="preserve">${x(traduire(l, this.langue))}</w:t></w:r></w:p>`).join('');
       const pageNum = this.numeroPage
         ? '<w:p><w:pPr><w:spacing w:before="40" w:after="0"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Open Sans" w:hAnsi="Open Sans" w:cs="Open Sans"/><w:color w:val="808080"/><w:sz w:val="17"/></w:rPr>' +
           '<w:t xml:space="preserve">Page </w:t></w:r>' +

@@ -22,11 +22,30 @@
     texte: [0.345, 0.349, 0.365], gris: [0.5, 0.5, 0.5], blanc: [1, 1, 1]
   };
 
-  /* Adresses du pied de page du modèle. */
-  const SIEGES_BFR = [
-    'Siège social et site de production n°1 – 1, rue du Jariel, ZAC Les Longs Sillons, 77120 Coulommiers, France',
-    'Site de production n°2 – 50 allée des érables, 01150 Blyes, France'
-  ];
+  /* « Travaux terminés » (Oui / Non / Partiellement) : c'est un choix, pas un texte.
+     Les anciennes versions laissaient le correcteur y ajouter un point (« Oui. »),
+     d'où la valeur relue sans ponctuation ni majuscule. */
+  const ETATS_TRAVAUX = { oui: 'Oui', non: 'Non', partiellement: 'Partiellement' };
+  const COULEURS_TERMINES = { Oui: '#15803d', Non: '#b91c1c', Partiellement: '#c2410c' };
+  function travauxTermines(i) {
+    const v = String((i && i.travauxTermines) || '').trim().replace(/[.!\s]+$/, '').toLowerCase();
+    return ETATS_TRAVAUX[v] || '';
+  }
+
+  /* Pied de page : le nom de la société puis l'adresse du site de Blyes.
+     Réglages → Compte rendu → « Adresse(s) du pied de page » permet d'en mettre
+     une autre (une ligne par adresse, deux au plus). */
+  const ADRESSE_BFR = '50 allée des érables, 01150 Blyes, France';
+  function lignesPiedPage(s) {
+    const so = (s && s.societe) || {};
+    let adresses = String(so.piedPage || '').split('\n').map(l => l.trim()).filter(Boolean);
+    if (!adresses.length) {
+      // anciens réglages « adresse du siège / du 2e site » : seulement celles saisies
+      adresses = [valeur(so.siege1), valeur(so.siege2)].filter(Boolean);
+    }
+    if (!adresses.length) adresses = [ADRESSE_BFR];
+    return [valeur(so.nom) || 'BFR SYSTEMS'].concat(adresses.slice(0, 2));
+  }
 
   /* ===================== Outils ======================================= */
   function hexRgb(hex) {
@@ -378,6 +397,40 @@
     };
   }
 
+  /* ===================== Travaux réalisés / constats ==================
+     Un évènement est soit un TRAVAIL RÉALISÉ (ce que le technicien a fait),
+     soit un CONSTAT (ce qu'il a observé, avec une priorité). Les évènements
+     enregistrés avant cette distinction sont des constats. */
+  function estTravail(ev) { return !!ev && ev.nature === 'travail'; }
+  const COULEUR_TRAVAIL = '#15803d';
+  const RESULTATS = {
+    // travail prévu (entretien, remplacement planifié…) réalisé comme prévu
+    termine: { libelle: 'Terminé', couleur: '#0f766e' },
+    // travail de dépannage : le problème est-il réglé ?
+    resolu: { libelle: 'Résolu', couleur: '#15803d' },
+    partiel: { libelle: 'Partiellement résolu', couleur: '#c2410c' },
+    surveiller: { libelle: 'À surveiller', couleur: '#b45309' }
+  };
+  const TYPES_INTERVENTION = {
+    sav: { libelle: 'SAV / dépannage', titre: "Compte rendu d'intervention" },
+    audit: { libelle: 'Audit', titre: "Rapport d'audit" },
+    mixte: { libelle: 'SAV + audit', titre: "Compte rendu d'intervention et d'audit" }
+  };
+  function titreRapport(i) {
+    const t = TYPES_INTERVENTION[i && i.typeIntervention];
+    return t ? t.titre : "Compte rendu d'intervention";
+  }
+  /* Ligne de conclusion sous le texte d'un évènement : résultat d'un travail,
+     ou « corrigé sur place » pour un constat. */
+  function mentionEvenement(ev) {
+    if (estTravail(ev)) {
+      const r = RESULTATS[ev.resultat];
+      return r ? { texte: 'Résultat : ' + r.libelle, couleur: r.couleur } : null;
+    }
+    if (ev && ev.corrige) return { texte: 'Corrigé sur place pendant l\'intervention', couleur: COULEUR_TRAVAIL };
+    return null;
+  }
+
   /* ===================== Données dérivées ============================= */
   function catalogue(reglages) {
     const S = reglages || {};
@@ -391,18 +444,22 @@
   function etat(intervention, reglages) {
     const { domaines, categories } = catalogue(reglages);
     const evs = (intervention.evenements || []).filter(e => e.domaine || valeur(e.texte));
+    const travaux = evs.filter(estTravail);
+    const constats = evs.filter(e => !estTravail(e));
     const parCategorie = {}, parDomaine = {};
     (reglages.categories || []).forEach(c => { parCategorie[c.id] = 0; });
     (reglages.domaines || []).forEach(d => { parDomaine[d.id] = 0; });
-    evs.forEach(function (e) {
+    // les catégories (priorités) ne concernent que les constats
+    constats.forEach(function (e) {
       parCategorie[e.categorie || 'INFO'] = (parCategorie[e.categorie || 'INFO'] || 0) + 1;
-      parDomaine[e.domaine] = (parDomaine[e.domaine] || 0) + 1;
     });
+    evs.forEach(function (e) { parDomaine[e.domaine] = (parDomaine[e.domaine] || 0) + 1; });
     const duree = dureeTotale(intervention);
     const nbPhotos = evs.reduce(function (a, e) { return a + (e.photos || []).length; }, 0) +
       (intervention.photosLibres || []).length;
     return {
       domaines: domaines, categories: categories, evenements: evs, parCategorie: parCategorie,
+      travaux: travaux, constats: constats, corriges: constats.filter(e => e.corrige).length,
       parDomaine: parDomaine, duree: duree, nbPhotos: nbPhotos,
       securite: (parCategorie.SECURITE || 0) + (parCategorie.URGENT || 0)
     };
@@ -410,9 +467,47 @@
 
   function evenementsDe(intervention, section) {
     const cats = section.categories || [];
+    const rang = (e) => (section.parPriorite ? cats.indexOf(e.categorie || 'INFO') : 0);
     return (intervention.evenements || [])
-      .filter(e => (e.domaine || valeur(e.texte)) && cats.indexOf(e.categorie || 'INFO') >= 0)
+      .filter(e => (e.domaine || valeur(e.texte)) && !estTravail(e) && cats.indexOf(e.categorie || 'INFO') >= 0)
+      .sort((a, b) => (rang(a) - rang(b)) || (new Date(a.heure || 0) - new Date(b.heure || 0)));
+  }
+  function travauxDe(intervention) {
+    return (intervention.evenements || [])
+      .filter(e => (e.domaine || valeur(e.texte)) && estTravail(e))
       .sort((a, b) => new Date(a.heure || 0) - new Date(b.heure || 0));
+  }
+
+  /* Plan du rapport selon le type d'intervention.
+     - SAV / dépannage : les travaux réalisés d'abord, puis les points relevés ;
+     - Audit           : les constats par priorité, puis les travaux éventuels ;
+     - SAV + audit     : partie travaux, puis partie constats par priorité.
+     Un rapport ancien (sans type) garde le canevas des réglages, sauf s'il contient
+     des travaux réalisés : il prend alors le plan « SAV + audit ». */
+  function canevasRapport(i, s) {
+    const base = (s && s.canevas && s.canevas.sections) ? s.canevas.sections : canevasDefaut().sections;
+    const type = (i && i.typeIntervention) || ((i && (i.evenements || []).some(estTravail)) ? 'mixte' : '');
+    if (!type) return base;
+    const d = {};
+    canevasDefaut().sections.forEach(x => { d[x.id] = x; });
+    base.forEach(x => { if (x && x.id) d[x.id] = x; });   // reprend les titres personnalisés
+    const avec = (x, titre) => Object.assign({}, x, { titre: titre });
+    const travaux = { id: 'travaux', type: 'travaux', titre: '0. Travaux réalisés' };
+    const fin = [d.prevoir, d.pieces, d.photos, d.signature].filter(Boolean);
+    if (type === 'sav') {
+      return [d.synthese, travaux,
+        // tous les constats dans une seule partie, les plus prioritaires d'abord
+        { id: 'constats', type: 'evenements', titre: '0. Points relevés', parPriorite: true,
+          categories: ['SECURITE', 'URGENT', 'HAUTE', 'BASSE', 'INFO'].concat(((s && s.categories) || []).map(c => c.id)) }]
+        .concat(fin);
+    }
+    if (type === 'audit') {
+      return [d.synthese, d.secu, d.haute, d.basse, d.info, travaux].concat(fin);
+    }
+    return [d.synthese, travaux,
+      avec(d.secu, '0. Constats — Sécurité et urgences'), avec(d.haute, '0. Constats — Priorité haute'),
+      avec(d.basse, '0. Constats — Priorité basse'), avec(d.info, '0. Constats — Informations complémentaires')]
+      .concat(fin);
   }
 
   /* ======================================================================
@@ -426,7 +521,7 @@
       /* Langue du rapport : 'fr' (défaut) ou le code de la langue du client.
          Les libellés du modèle sont traduits par langues.js, à l'écriture. */
       this.langue = this.opts.langue || (intervention.langue && intervention.langue.code) || 'fr';
-      this.canevas = (this.s.canevas && this.s.canevas.sections) ? this.s.canevas.sections : canevasDefaut().sections;
+      this.canevas = canevasRapport(intervention, this.s);
       this.etat = etat(intervention, reglages);
       /* Aperçu à l'écran : même mise en page, dessinée sur des canvas
          (aucune visionneuse PDF n'est nécessaire dans le navigateur). */
@@ -491,9 +586,10 @@
 
       /* Titre du modèle : « Compte rendu d'intervention » puis la date, centrés
          en cyan BFR, comme le style « Titre » du Google Doc (36 pt). */
-      const titre = "Compte rendu d'intervention";
+      const titre = this.L(titreRapport(i));
       let taille = 30;
-      while (taille > 16 && Pdf.measure(titre, taille, true) > this.CW) taille -= 1;
+      // marge de 10 % : la mesure du gras est approchée
+      while (taille > 16 && Pdf.measure(titre, taille, true) > this.CW * 0.9) taille -= 1;
       p.text(titre, this.W / 2, p.y + taille, { size: taille, font: 'F2', color: CYAN, align: 'center' });
       p.y += taille + 8;
       p.text(frDate(i.date), this.W / 2, p.y + taille * 0.72, { size: taille * 0.72, font: 'F2', color: CYAN, align: 'center' });
@@ -739,7 +835,9 @@
     /** Bandeau coloré d'un évènement : [n° k/n] domaine — [machine] · heure · CATÉGORIE. */
     bandeauEvenement(ev, numero) {
       const { domaines, categories } = this.etat;
-      const cat = categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
+      const cat = estTravail(ev)
+        ? { libelle: 'Travail réalisé', couleur: COULEUR_TRAVAIL }
+        : (categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' });
       const dom = domaines[ev.domaine] || { libelle: '—', icone: '' };
       const p = this.pdf, C = this.C;
       const couleur = hexRgb(cat.couleur);
@@ -772,7 +870,9 @@
       });
       const texte = valeur(ev.texte) || '(aucune annotation)';
       const n = photos.length;
-      const L = { sources: sources, photos: photos, texte: texte, n: n, lh: lh, gap: gap, hBandeau: 24, apres: 16, hLegende: n ? 14 : 0 };
+      const L = { sources: sources, photos: photos, texte: texte, n: n, lh: lh, gap: gap, hBandeau: 24, apres: 16, hLegende: n ? 14 : 0,
+        mention: mentionEvenement(ev) };
+      const hMention = L.mention ? lh + 2 : 0;
       if (n === 1) {
         L.mode = 'cote';
         L.wPhoto = Math.round(this.CW * 0.44);
@@ -780,12 +880,12 @@
         L.lignes = Pdf.wrap(texte, L.wTexte - 18, 10.0);
         const hNaturelle = (L.wPhoto - 4) / photos[0].r + 4;
         L.hPhoto = Math.round(Math.max(130, Math.min(215, hNaturelle)));
-        L.hBoite = Math.max(L.lignes.length * lh + 10, L.hPhoto);
+        L.hBoite = Math.max(L.lignes.length * lh + 10 + hMention, L.hPhoto);
         L.hCorps = Math.max(L.hBoite, L.hPhoto + L.hLegende);
       } else {
         L.mode = n === 0 ? 'texte' : 'grille';
         L.lignes = Pdf.wrap(texte, this.CW - 18, 10.0);
-        L.hBoite = Math.max(L.lignes.length, 1) * lh + 10;
+        L.hBoite = Math.max(L.lignes.length, 1) * lh + 10 + hMention;
         L.colW = (this.CW - gap) / 2;
         L.hCase = n === 2 ? 180 : 150;
         L.rangs = Math.ceil(n / 2);
@@ -815,6 +915,10 @@
       for (let j = 0; j < L.lignes.length; j++) {
         p.text(L.lignes[j], this.M + 9, y0 + 10.5 + j * L.lh, { size: 10.0, color: C.texte });
       }
+      if (L.mention) {
+        p.text(Pdf.trunc(this.L(L.mention.texte), largeurTexte - 18, 9.6, true), this.M + 9, y0 + 10.5 + L.lignes.length * L.lh + 2,
+          { size: 9.6, font: 'F2', color: hexRgb(L.mention.couleur) });
+      }
       if (L.mode === 'cote') {
         this.cadrePhoto(L.photos[0], this.M + L.wTexte + L.gap, y0, L.wPhoto, L.hPhoto);
       } else if (L.mode === 'grille') {
@@ -843,6 +947,7 @@
       }
       this.bandeauEvenement(ev, numero);
       this.blocTexte(null, L.texte);
+      if (L.mention) { this.saut(18); this.pdf.text(this.L(L.mention.texte), this.M + 9, this.pdf.y + 8, { size: 9.6, font: 'F2', color: hexRgb(L.mention.couleur) }); this.pdf.y += 16; }
       if (L.n) await this.photos(L.sources.map(ph => ({ dataUrl: ph.dataUrl, legende: ph.legende || '' })), true, false);
       this.pdf.y += 6;
     }
@@ -869,7 +974,10 @@
       for (let j = 0; j < lignes.length; j++) {
         p.text(lignes[j], this.M + 9, p.y + 10.5 + j * lh, { size: 10.0, color: C.texte });
       }
-      p.y += hBoite + 14;
+      p.y += hBoite + 4;
+      const mention = mentionEvenement(ev);
+      if (mention) { p.text(this.L(mention.texte), this.M + 9, p.y + 9, { size: 9.6, font: 'F2', color: hexRgb(mention.couleur) }); p.y += 16; }
+      p.y += 10;
 
       // 3. Photos harmonisées de l'évènement
       if (photosEv.length) {
@@ -880,16 +988,20 @@
     async blocSynthese() {
       const p = this.pdf, C = this.C, i = this.i, e = this.etat;
       // bandeau de compteurs par catégorie
-      const cats = (this.s.categories || []).filter(c => e.parCategorie[c.id]);
-      if (cats.length) {
-        const nb = cats.length;
+      // une case « Travaux réalisés » (en vert) puis une case par priorité de constat
+      const cases = [];
+      if (e.travaux.length) cases.push({ n: e.travaux.length, libelle: 'Travaux réalisés', couleur: COULEUR_TRAVAIL });
+      (this.s.categories || []).filter(c => e.parCategorie[c.id])
+        .forEach(c => cases.push({ n: e.parCategorie[c.id], libelle: c.libelle, couleur: c.couleur }));
+      if (cases.length) {
+        const nb = cases.length;
         const caseW = (this.CW - (nb - 1) * 5) / nb;
         this.saut(33);
         const y = p.y;
-        cats.forEach(function (c, k) {
+        cases.forEach(function (c, k) {
           const x = this.M + k * (caseW + 5);
           p.rect(x, y, caseW, 33, { fill: hexClair(c.couleur, 0.88), stroke: hexRgb(c.couleur), lineWidth: 0.5 });
-          p.text(String(e.parCategorie[c.id]), x + caseW / 2, y + 16, { size: 16, font: 'F2', color: hexRgb(c.couleur), align: 'center' });
+          p.text(String(c.n), x + caseW / 2, y + 16, { size: 16, font: 'F2', color: hexRgb(c.couleur), align: 'center' });
           p.text(Pdf.trunc(this.L(c.libelle), caseW - 6, 7.8), x + caseW / 2, y + 27.5, { size: 7.8, color: C.gris, align: 'center' });
         }, this);
         p.y = y + 41;
@@ -903,6 +1015,8 @@
       lignes.push(['Heures passées sur site', formatDuree(e.duree) ? formatDuree(e.duree) + ' (' + dureeDecimale(e.duree) + ' h)' : '—']);
       lignes.push(['Photos jointes', String(e.nbPhotos)]);
       lignes.push(['Points de sécurité / urgence', String(e.securite)]);
+      if (e.corriges) lignes.push(['Constats corrigés sur place', String(e.corriges)]);
+      if (travauxTermines(i)) lignes.push(['Travaux terminés', travauxTermines(i)]);
       this.kv(lignes.map(function (l) { return [l[0], l[1], true]; }));
 
       if (valeur(i.resumeTechnicien)) this.blocTexte('Synthèse du technicien', i.resumeTechnicien);
@@ -1144,7 +1258,20 @@
       const mentionTraduite = this.L(mention);
       const hT = Pdf.wrap(mentionTraduite, this.CW - 16, 8.8).length * 11.8 + 10;
       const hBloc = 124;
-      this.saut(hT + hBloc + 26);
+      // comme sur la fiche papier : « Travaux terminés : Oui — Fait le … » avant les signatures
+      const tt = travauxTermines(i), faitLe = valeur(i.faitLe);
+      const hEtat = (tt || faitLe) ? 22 : 0;
+      this.saut(hEtat + hT + hBloc + 26);
+      if (hEtat) {
+        const yE = p.y + 12;
+        if (tt) {
+          const lib = this.L('Travaux terminés') + ' :';   // l'espace final serait retiré à l'impression
+          p.text(lib, this.M, yE, { size: 10.5, font: 'F2', color: C.texte });
+          p.text(this.L(tt), this.M + Pdf.measure(lib, 10.5, true) + 5, yE, { size: 10.5, font: 'F2', color: hexRgb(COULEURS_TERMINES[tt]) });
+        }
+        if (faitLe) p.text(this.L('Fait le') + ' ' + frDate(faitLe), this.M + this.CW, yE, { size: 10, color: C.texte, align: 'right' });
+        p.y += hEtat;
+      }
       const y0 = p.y;
       p.rect(this.M, y0, this.CW, hT, { fill: [1, 0.976, 0.929], stroke: [0.99, 0.9, 0.6], lineWidth: 0.5 });
       p.paragraph(mentionTraduite, this.M + 8, y0 + 3, this.CW - 16, { size: 8.8, lineHeight: 11.8, color: [0.42, 0.29, 0.05] });
@@ -1296,15 +1423,27 @@
           this.titre(num(section, 'Synthèse'));
           await this.blocSynthese();
           dernierTypeEtaitEvenement = false;
-        } else if (section.type === 'evenements') {
-          const evs = evenementsDe(i, section);
-          if (!evs.length) continue;
+        } else if (section.type === 'evenements' || section.type === 'travaux') {
+          const sectionTravaux = section.type === 'travaux';
+          const evs = sectionTravaux ? travauxDe(i) : evenementsDe(i, section);
+          // section « Travaux réalisés » : le résumé écrit (champ Travaux réalisés) en tête
+          const resume = sectionTravaux ? valeur(i.actions) : '';
+          if (!evs.length && !resume) continue;
+          if (!evs.length) {
+            if (dernierTypeEtaitEvenement) { this.pdf.newPage(); this.enteteSuite(); }
+            this.titre(num(section, 'Travaux réalisés'));
+            this.blocTexte(null, resume);
+            dernierTypeEtaitEvenement = false;
+            continue;
+          }
+          const motNombre = sectionTravaux ? (evs.length > 1 ? 'travaux' : 'travail') : 'évènements';
           if (miseEnPageCompacte(this.s)) {
             const titreSection = num(section, 'Évènements');
             const dispos = evs.map(ev => this.dispositionEvenement(ev));
-            const sousTitre = evs.length > 1 ? evs.length + ' ' + this.L('évènements') : null;
+            const sousTitre = evs.length > 1 ? evs.length + ' ' + this.L(motNombre) : null;
             // le bandeau de section ne reste jamais seul en bas de page
-            this.titre(titreSection, sousTitre, Math.min(dispos[0].hTotal, this.hauteurUtile()));
+            this.titre(titreSection, sousTitre, Math.min(dispos[0].hTotal + (resume ? 40 : 0), this.hauteurUtile()));
+            if (resume) this.blocTexte(null, resume);
             for (let k = 0; k < evs.length; k++) {
               const L = dispos[k];
               const numero = evs.length > 1 ? (k + 1) + '/' + evs.length : '';
@@ -1317,6 +1456,11 @@
             }
             dernierTypeEtaitEvenement = false;
             continue;
+          }
+          if (resume) {
+            this.pdf.newPage(); this.enteteSuite();
+            this.titre(num(section, 'Travaux réalisés'));
+            this.blocTexte(null, resume);
           }
           let idx = 0;
           for (const ev of evs) {
@@ -1384,14 +1528,9 @@
         }
       }
 
-      // pied de page du modèle : société + adresses des deux sites + n° de page
+      // pied de page : société + adresse du site + n° de page
       const self = this, doc = this.pdf;
-      const sieges = [(s.societe && s.societe.nom) || 'BFR SYSTEMS']
-        .concat(SIEGES_BFR.map(function (l) {
-          if (s.societe && s.societe.siege1 && l.indexOf('n°1') > 0) return 'Siège social et site de production n°1 – ' + s.societe.siege1;
-          if (s.societe && s.societe.siege2 && l.indexOf('n°2') > 0) return 'Site de production n°2 – ' + s.societe.siege2;
-          return l;
-        }));
+      const sieges = lignesPiedPage(s);
       doc.addFooters(function (d, num, total) {
         const y = d.H - 20;
         d.line(d.margin, y - 26, d.W - d.margin, y - 26, { color: COULEURS_PDF.bord, width: 0.6 });
@@ -1429,17 +1568,15 @@
       this.s = reglages || {};
       this.opts = opts || {};
       this.langue = this.opts.langue || (intervention.langue && intervention.langue.code) || 'fr';
-      this.canevas = (this.s.canevas && this.s.canevas.sections) ? this.s.canevas.sections : canevasDefaut().sections;
+      this.canevas = canevasRapport(intervention, this.s);
       this.etat = etat(intervention, reglages);
       this.doc = new Docx.Doc({
         langue: this.langue,
         auteur: (this.s.societe && this.s.societe.nom) || 'Application SAV',
-        /* Pied de page du modèle : nom + adresses des deux sites, et numérotation. */
-        pied: [(this.s.societe && this.s.societe.nom) || 'BFR SYSTEMS']
-          .concat([valeur(this.s.societe && this.s.societe.siege1) || SIEGES_BFR[0],
-                   valeur(this.s.societe && this.s.societe.siege2) || SIEGES_BFR[1]])
+        /* Pied de page : nom de la société + adresse du site, et numérotation. */
+        pied: lignesPiedPage(this.s)
       });
-      this.doc.titreDoc = (global.I18N ? global.I18N.traduire("Compte rendu d'intervention", this.langue) : "Compte rendu d'intervention") +
+      this.doc.titreDoc = this.L(titreRapport(intervention)) +
         (this.langue === 'fr' ? ' N° ' : ' No. ') + valeur(intervention.numero);
       this.numeroPhoto = 0;
     }
@@ -1447,6 +1584,29 @@
     /* Traduction d'un libellé du catalogue (domaines, catégories). */
     L(txt) {
       return (global.I18N ? global.I18N.traduire(txt, this.langue) : txt);
+    }
+
+    /* En-tête d'un évènement : n°, domaine, machine, [TRAVAIL RÉALISÉ] ou
+       [PRIORITÉ], heure. */
+    morceauxEvenement(ev, numero) {
+      const dom = this.etat.domaines[ev.domaine] || { libelle: '—' };
+      const b = estTravail(ev) ? { libelle: 'Travail réalisé', couleur: COULEUR_TRAVAIL }
+        : (this.etat.categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' });
+      const morc = [];
+      if (numero) morc.push({ t: numero + '   ', font: 'Poppins', gras: true, taille: 10.5, couleur: '94A3B8' });
+      morc.push({ t: this.L(dom.libelle), font: 'Poppins', gras: true, taille: 11.5, couleur: '332E72' });
+      if (ev.machineNom) morc.push({ t: '   [' + ev.machineNom + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: '06BAF2' });
+      morc.push(
+        { t: '   [' + this.L(b.libelle).toUpperCase() + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: hexDocx(b.couleur) },
+        { t: heureFr(ev.heure) ? '   ' + heureFr(ev.heure) : '', taille: 9.5, couleur: '94A3B8' }
+      );
+      return morc;
+    }
+
+    /* « Résultat : … » d'un travail ou « Corrigé sur place » d'un constat. */
+    mentionWord(ev) {
+      const m = mentionEvenement(ev);
+      return m ? { t: this.L(m.texte), gras: true, taille: 10, couleur: hexDocx(m.couleur) } : null;
     }
 
     async generer() {
@@ -1474,7 +1634,7 @@
                   { texte: '' }]], { largeurs: [70, 15, 15], sansBordures: true });
 
       /* Titre du modèle : cyan BFR, centré */
-      d.grandTitre("Compte rendu d'intervention", 30);
+      d.grandTitre(titreRapport(i), i.typeIntervention === 'mixte' ? 24 : 30);
       d.grandTitre(frDate(i.date), 22);
       d.para('', { taille: 6, apres: 200 });
 
@@ -1632,10 +1792,18 @@
       for (const section of this.canevas) {
         if (section.type === 'synthese') {
           d.bandeau(num(section, 'Synthèse'));
-          const lignes = (this.s.categories || []).filter(c => this.etat.parCategorie[c.id])
-            .map(c => [{ texte: this.L(c.libelle) }, { texte: String(this.etat.parCategorie[c.id]), align: 'center', gras: true }]);
+          const lignes = (this.etat.travaux.length
+            ? [[{ texte: this.L('Travaux réalisés'), gras: true, couleur: hexDocx(COULEUR_TRAVAIL) },
+                { texte: String(this.etat.travaux.length), align: 'center', gras: true, couleur: hexDocx(COULEUR_TRAVAIL) }]]
+            : []).concat((this.s.categories || []).filter(c => this.etat.parCategorie[c.id])
+            .map(c => [{ texte: this.L(c.libelle) }, { texte: String(this.etat.parCategorie[c.id]), align: 'center', gras: true }]));
           if (lignes.length) d.tableau([[{ texte: 'Catégorie', gras: true }, { texte: 'Nombre', gras: true, align: 'center' }]].concat(lignes),
             { largeurs: [70, 30], enteteFond: 'E8EFFA' });
+          if (this.etat.corriges) d.para(this.L('Constats corrigés sur place') + ' : ' + this.etat.corriges,
+            { taille: 10.5, gras: true, couleur: hexDocx(COULEUR_TRAVAIL), apres: 60 });
+          if (travauxTermines(i)) d.para([{ t: this.L('Travaux terminés') + ' : ', gras: true },
+            { t: this.L(travauxTermines(i)), gras: true, couleur: hexDocx(COULEURS_TERMINES[travauxTermines(i)]) }],
+            { taille: 10.5, apres: 60 });
           const dom = (this.s.domaines || []).filter(x => this.etat.parDomaine[x.id])
             .map(x => this.L(x.libelle) + ' : ' + this.etat.parDomaine[x.id]);
           if (dom.length) d.para(dom.join('   •   '), { taille: 10.5, couleur: '334155', apres: 60 });
@@ -1647,39 +1815,46 @@
           if (valeur(i.objet)) d.para('Objet / demande du client', { font: 'Poppins', gras: true, taille: 11.5, apres: 40 }),
             d.para(i.objet, { taille: 10.5, apres: 120 });
           dernierTypeEtaitEvenement = false;
-        } else if (section.type === 'evenements') {
-          const evs = evenementsDe(i, section);
-          if (!evs.length) continue;
+        } else if (section.type === 'evenements' || section.type === 'travaux') {
+          const sectionTravaux = section.type === 'travaux';
+          const evs = sectionTravaux ? travauxDe(i) : evenementsDe(i, section);
+          // section « Travaux réalisés » : le résumé écrit (champ Travaux réalisés) en tête
+          const resume = sectionTravaux ? valeur(i.actions) : '';
+          if (!evs.length && !resume) continue;
+          const titreSection = this.L(num(section, sectionTravaux ? 'Travaux réalisés' : 'Évènements'));
+          if (!evs.length) {
+            if (dernierTypeEtaitEvenement) d.sautDePage();
+            d.bandeau(titreSection);
+            d.para(resume, { taille: 10.5, apres: 120 });
+            dernierTypeEtaitEvenement = false;
+            continue;
+          }
+          const motNombre = sectionTravaux ? (evs.length > 1 ? 'travaux' : 'travail') : 'évènements';
           if (miseEnPageCompacte(this.s)) {
             /* Même logique que le PDF : évènements à la suite, mise en page selon le
                nombre de photos (0 : texte ; 1 : texte | photo ; 2 et plus : grille). */
-            d.bandeau(num(section, 'Évènements') + (evs.length > 1 ? ' — ' + evs.length + ' ' + this.L('évènements') : ''));
+            d.bandeau(titreSection + (evs.length > 1 ? ' — ' + evs.length + ' ' + this.L(motNombre) : ''));
+            if (resume) d.para(resume, { taille: 10.5, apres: 120 });
             let k = 0;
             for (const ev of evs) {
               k++;
-              const cat = this.etat.categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
-              const dom = this.etat.domaines[ev.domaine] || { libelle: '—' };
-              const morc = [];
-              if (evs.length > 1) morc.push({ t: k + '/' + evs.length + '   ', font: 'Poppins', gras: true, taille: 10.5, couleur: '94A3B8' });
-              morc.push({ t: this.L(dom.libelle), font: 'Poppins', gras: true, taille: 11.5, couleur: '332E72' });
-              if (ev.machineNom) morc.push({ t: '   [' + ev.machineNom + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: '06BAF2' });
-              morc.push(
-                { t: '   [' + this.L(cat.libelle).toUpperCase() + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: hexDocx(cat.couleur) },
-                { t: heureFr(ev.heure) ? '   ' + heureFr(ev.heure) : '', taille: 9.5, couleur: '94A3B8' }
-              );
-              d.para(morc, { avant: 200, apres: 50, avecSuivant: true });
+              d.para(this.morceauxEvenement(ev, evs.length > 1 ? k + '/' + evs.length : ''), { avant: 200, apres: 50, avecSuivant: true });
               const texteEv = valeur(ev.texte) || '(aucune annotation)';
+              const mention = this.mentionWord(ev);
               const phs = (ev.photos || []).filter(x => x.dataUrl);
               const legende = (ph) => this.L('Photo') + ' ' + (++this.numeroPhoto) + (ph.legende ? ' — ' + ph.legende : '');
               if (phs.length === 1) {
                 // texte à gauche, photo à droite (6,8 cm de côté au plus)
                 const r = ratioPhoto(phs[0].dataUrl);
                 const cm = Math.min(6.8, 6.8 / r);
+                const runs = String(texteEv).split('\n').map((l, n) => ({ t: l, saut: n > 0 }));
+                if (mention) runs.push(Object.assign({ saut: true }, mention));
                 d.tableau([
-                  [{ texte: texteEv, taille: 10.5, fond: 'F2F7FD', vAlign: 'top' }, { image: phs[0].dataUrl, imageCm: cm, legende: legende(phs[0]) }]
+                  [{ texte: runs, taille: 10.5, fond: 'F2F7FD', vAlign: 'top' }, { image: phs[0].dataUrl, imageCm: cm, legende: legende(phs[0]) }]
                 ], { largeurs: [56, 44], sansBordures: true });
               } else {
-                d.para(texteEv, { taille: 10.5, apres: 80, encadre: true, avecSuivant: phs.length > 0 });
+                d.para(texteEv, { taille: 10.5, apres: mention ? 30 : 80, encadre: true, avecSuivant: phs.length > 0 || !!mention });
+                if (mention) d.para([mention], { apres: 80, avecSuivant: phs.length > 0 });
                 if (phs.length) {
                   // grille de 2 colonnes : 2 photos = 8 × 6 cm, 3-4 photos = 7 × 5 cm
                   const maxL = phs.length === 2 ? 8 : 7, maxH = phs.length === 2 ? 6 : 5;
@@ -1698,28 +1873,22 @@
             dernierTypeEtaitEvenement = false;
             continue;
           }
+          if (resume) {
+            d.sautDePage();
+            d.bandeau(titreSection);
+            d.para(resume, { taille: 10.5, apres: 120 });
+          }
           let idx = 0;
           for (const ev of evs) {
             idx++;
             // Réglage « une page par évènement ».
             d.sautDePage();
             const sousTitre = evs.length > 1 ? (' — ' + this.L('Évènement') + ' ' + idx + ' / ' + evs.length) : '';
-            d.bandeau((num(section, 'Évènements')) + sousTitre);
-
-            const cat = this.etat.categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
-            const dom = this.etat.domaines[ev.domaine] || { libelle: '—' };
-            const morc = [
-              { t: this.L(dom.libelle), font: 'Poppins', gras: true, taille: 11.5, couleur: '332E72' }
-            ];
-            if (ev.machineNom) {
-              morc.push({ t: '   [' + ev.machineNom + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: '06BAF2' });
-            }
-            morc.push(
-              { t: '   [' + this.L(cat.libelle).toUpperCase() + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: hexDocx(cat.couleur) },
-              { t: heureFr(ev.heure) ? '   ' + heureFr(ev.heure) : '', taille: 9.5, couleur: '94A3B8' }
-            );
-            d.para(morc, { avant: 140, apres: 50 });
-            d.para(valeur(ev.texte) || '(aucune annotation)', { taille: 10.5, apres: 80, encadre: true });
+            d.bandeau(titreSection + sousTitre);
+            d.para(this.morceauxEvenement(ev, ''), { avant: 140, apres: 50 });
+            const mention = this.mentionWord(ev);
+            d.para(valeur(ev.texte) || '(aucune annotation)', { taille: 10.5, apres: mention ? 30 : 80, encadre: true });
+            if (mention) d.para([mention], { apres: 80 });
 
             const phs = (ev.photos || []).filter(x => x.dataUrl);
             if (phs.length === 1) {
@@ -1841,6 +2010,14 @@
           if (tr && tr.actif) {
             mention += " La durée du trajet retour est estimée sur la base du trajet aller constaté.";
           }
+          const ttW = travauxTermines(i), faitLeW = valeur(i.faitLe);
+          if (ttW || faitLeW) {
+            d.tableau([[
+              { texte: ttW ? [{ t: this.L('Travaux terminés') + ' : ', gras: true },
+                { t: this.L(ttW), gras: true, couleur: hexDocx(COULEURS_TERMINES[ttW]) }] : '' },
+              { texte: faitLeW ? this.L('Fait le') + ' ' + frDate(faitLeW) : '', align: 'right' }
+            ]], { largeurs: [60, 40], sansBordures: true });
+          }
           d.para(this.L(mention), { taille: 9.8, apres: 160, encadre: true });
           const cli = i.signatureClient || {};
           const ligAccompagne = (colleguesP1Word.length > 0)
@@ -1865,7 +2042,7 @@
   function variables(intervention, reglages) {
     const e = etat(intervention, reglages);
     const i = intervention;
-    const lignes = e.evenements
+    const lignes = e.constats
       .filter(x => x.categorie === 'SECURITE' || x.categorie === 'URGENT' || x.categorie === 'HAUTE')
       .map(function (x) {
         const cat = e.categories[x.categorie] || {};
@@ -1908,6 +2085,11 @@
       debut: heureFr(i.chrono && i.chrono.debut), fin: heureFr(i.chrono && i.chrono.fin),
       duree: formatDuree(e.duree) || '—',
       nbEvenements: String(e.evenements.length),
+      nbTravaux: String(e.travaux.length), nbConstats: String(e.constats.length),
+      travauxTermines: travauxTermines(i), faitLe: frDate(i.faitLe),
+      nbCorriges: String(e.corriges),
+      typeIntervention: (TYPES_INTERVENTION[i.typeIntervention] || {}).libelle || '',
+      titreRapport: titreRapport(i),
       nbSecurite: String(e.parCategorie.SECURITE || 0),
       nbUrgent: String(e.parCategorie.URGENT || 0),
       nbHaute: String(e.parCategorie.HAUTE || 0),
@@ -2196,6 +2378,9 @@
     objetMailSAV: objetMailSAV, corpsMailSAV: corpsMailSAV,
     corpsMailBilingue: corpsMailBilingue, texteSMSArrivee: texteSMSArrivee,
     infoMachinePiece: infoMachinePiece,
+    estTravail: estTravail, travauxDe: travauxDe, travauxTermines: travauxTermines, titreRapport: titreRapport, canevasRapport: canevasRapport,
+    mentionEvenement: mentionEvenement, RESULTATS: RESULTATS, TYPES_INTERVENTION: TYPES_INTERVENTION,
+    COULEUR_TRAVAIL: COULEUR_TRAVAIL,
     nomComplet: nomComplet, contactTech: contactTech, nomTechnicien: nomTechnicien
   };
 })(window);

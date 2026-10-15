@@ -682,9 +682,24 @@ input:focus, select:focus, textarea:focus {
 
 .ev-pied {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 0 12px 10px;
+}
+
+.ev-texte-bloc { min-width: 0; }
+
+.btn-ev-pill.basculer {
+  background: #f0fdf4;
+  color: #15803d;
+  border-color: rgba(21, 128, 61, 0.35);
+}
+
+.ev-carte.travail .btn-ev-pill.basculer {
+  background: #eef2ff;
+  color: var(--bfr-secondary);
+  border-color: rgba(51, 46, 114, 0.25);
 }
 
 .ev-actions-pied {
@@ -707,6 +722,7 @@ input:focus, select:focus, textarea:focus {
   cursor: pointer;
   transition: all 0.15s ease;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .btn-ev-pill.apercu {
@@ -1037,7 +1053,144 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--c);
 }
 
-.ev-texte {
+/* Nature de l'évènement : travail réalisé (vert) ou constat (bleu BFR) */
+.natures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.nature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 68px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 2px solid var(--bfr-border);
+  background: #fff;
+  font-family: var(--font-heading);
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--bfr-text);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.nature .ico {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  background: var(--bfr-secondary-light);
+  color: var(--bfr-secondary);
+}
+
+.nature .lib small,
+.categorie .lib small.sous,
+.corrige-case small {
+  display: block;
+  font-family: var(--font-body, inherit);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--bfr-text-muted);
+  margin-top: 2px;
+}
+
+.nature.travail.on { border-color: #15803d; background: #dcfce7; color: #14532d; }
+.nature.travail.on .ico { background: #15803d; color: #fff; }
+.nature.constat.on { border-color: var(--bfr-primary); background: var(--bfr-primary-light); color: var(--bfr-secondary); }
+.nature.constat.on .ico { background: var(--bfr-primary); color: #fff; }
+
+.corrige-case {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  border: 1.5px dashed #15803d;
+  background: #f0fdf4;
+  color: #14532d;
+  cursor: pointer;
+}
+
+.corrige-case input { width: 22px; height: 22px; accent-color: #15803d; flex: 0 0 auto; }
+
+/* Listes « Travaux réalisés » / « Constats » de l'écran principal */
+.ev-groupe-titre {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 2px 8px;
+  font-family: var(--font-heading);
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--bfr-secondary);
+}
+
+.ev-groupe-titre:first-child { margin-top: 2px; }
+.ev-groupe-titre .compte {
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bfr-secondary-light);
+}
+
+.ev-groupe-titre.travaux { color: #15803d; }
+.ev-groupe-titre.travaux .compte { background: #dcfce7; }
+
+.ev-mention {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--c, #15803d);
+  background: var(--f, #dcfce7);
+}
+
+/* Témoin « À l'écoute » pendant la dictée */
+.dictee-active {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dictee-point {
+  flex: 0 0 12px;
+  height: 12px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: #dc2626;
+  animation: dictee-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dictee-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dictee-point { animation: none; }
+}
+
+/* zone de saisie de l'assistant (et non le texte des cartes, qui porte la même classe) */
+textarea.ev-texte {
   width: 100%;
   min-height: 160px;
 }

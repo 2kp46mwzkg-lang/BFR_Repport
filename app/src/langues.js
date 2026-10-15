@@ -233,6 +233,80 @@
     'évènements': { en: 'events', de: 'Ereignisse', nl: 'gebeurtenissen', es: 'eventos', it: 'eventi', pt: 'eventos' },
     'Évènement': { en: 'Event', de: 'Ereignis', nl: 'Gebeurtenis', es: 'Evento', it: 'Evento', pt: 'Evento' },
     'suite': { en: 'continued', de: 'Fortsetzung', nl: 'vervolg', es: 'continuación', it: 'segue', pt: 'continuação' },
+
+    /* Travaux terminés (validation) */
+    'Travaux terminés': {
+      en: 'Work completed', de: 'Arbeiten abgeschlossen', nl: 'Werkzaamheden voltooid',
+      es: 'Trabajos terminados', it: 'Lavori terminati', pt: 'Trabalhos concluídos'
+    },
+    'Oui': { en: 'Yes', de: 'Ja', nl: 'Ja', es: 'Sí', it: 'Sì', pt: 'Sim' },
+    'Non': { en: 'No', de: 'Nein', nl: 'Nee', es: 'No', it: 'No', pt: 'Não' },
+    'Partiellement': { en: 'Partially', de: 'Teilweise', nl: 'Gedeeltelijk', es: 'Parcialmente', it: 'Parzialmente', pt: 'Parcialmente' },
+    'Fait le': { en: 'Done on', de: 'Erstellt am', nl: 'Opgesteld op', es: 'Hecho el', it: 'Redatto il', pt: 'Feito em' },
+
+    /* Travaux réalisés / constats et types d'intervention */
+    'Travaux réalisés': {
+      en: 'Work performed', de: 'Durchgeführte Arbeiten', nl: 'Uitgevoerde werkzaamheden',
+      es: 'Trabajos realizados', it: 'Lavori eseguiti', pt: 'Trabalhos realizados'
+    },
+    'Travail réalisé': {
+      en: 'Work carried out', de: 'Durchgeführte Arbeit', nl: 'Uitgevoerd werk',
+      es: 'Trabajo realizado', it: 'Lavoro eseguito', pt: 'Trabalho realizado'
+    },
+    'travaux': { en: 'tasks', de: 'Arbeiten', nl: 'werkzaamheden', es: 'trabajos', it: 'lavori', pt: 'trabalhos' },
+    'travail': { en: 'task', de: 'Arbeit', nl: 'werkzaamheid', es: 'trabajo', it: 'lavoro', pt: 'trabalho' },
+    'Points relevés': {
+      en: 'Findings', de: 'Festgestellte Punkte', nl: 'Vastgestelde punten',
+      es: 'Puntos observados', it: 'Punti rilevati', pt: 'Pontos observados'
+    },
+    'Constats — Sécurité et urgences': {
+      en: 'Findings — Safety and emergencies', de: 'Feststellungen — Sicherheit und Notfälle', nl: 'Bevindingen — Veiligheid en urgenties',
+      es: 'Hallazgos — Seguridad y urgencias', it: 'Rilievi — Sicurezza e urgenze', pt: 'Constatações — Segurança e urgências'
+    },
+    'Constats — Priorité haute': {
+      en: 'Findings — High priority', de: 'Feststellungen — Hohe Priorität', nl: 'Bevindingen — Hoge prioriteit',
+      es: 'Hallazgos — Prioridad alta', it: 'Rilievi — Priorità alta', pt: 'Constatações — Prioridade alta'
+    },
+    'Constats — Priorité basse': {
+      en: 'Findings — Low priority', de: 'Feststellungen — Niedrige Priorität', nl: 'Bevindingen — Lage prioriteit',
+      es: 'Hallazgos — Prioridad baja', it: 'Rilievi — Priorità bassa', pt: 'Constatações — Prioridade baixa'
+    },
+    'Constats — Informations complémentaires': {
+      en: 'Findings — Additional information', de: 'Feststellungen — Zusätzliche Informationen', nl: 'Bevindingen — Aanvullende informatie',
+      es: 'Hallazgos — Información adicional', it: 'Rilievi — Informazioni aggiuntive', pt: 'Constatações — Informações complementares'
+    },
+    'Résultat : Terminé': {
+      en: 'Result: Completed', de: 'Ergebnis: Abgeschlossen', nl: 'Resultaat: Voltooid',
+      es: 'Resultado: Terminado', it: 'Esito: Completato', pt: 'Resultado: Concluído'
+    },
+    'Résultat : Résolu': {
+      en: 'Result: Resolved', de: 'Ergebnis: Behoben', nl: 'Resultaat: Opgelost',
+      es: 'Resultado: Resuelto', it: 'Esito: Risolto', pt: 'Resultado: Resolvido'
+    },
+    'Résultat : Partiellement résolu': {
+      en: 'Result: Partially resolved', de: 'Ergebnis: Teilweise behoben', nl: 'Resultaat: Gedeeltelijk opgelost',
+      es: 'Resultado: Parcialmente resuelto', it: 'Esito: Parzialmente risolto', pt: 'Resultado: Parcialmente resolvido'
+    },
+    'Résultat : À surveiller': {
+      en: 'Result: To be monitored', de: 'Ergebnis: Zu überwachen', nl: 'Resultaat: In de gaten houden',
+      es: 'Resultado: A vigilar', it: 'Esito: Da monitorare', pt: 'Resultado: A acompanhar'
+    },
+    "Corrigé sur place pendant l'intervention": {
+      en: 'Corrected on site during the service call', de: 'Während des Einsatzes vor Ort behoben', nl: 'Ter plaatse verholpen tijdens de interventie',
+      es: 'Corregido in situ durante la intervención', it: "Corretto sul posto durante l'intervento", pt: 'Corrigido no local durante a intervenção'
+    },
+    'Constats corrigés sur place': {
+      en: 'Findings corrected on site', de: 'Vor Ort behobene Feststellungen', nl: 'Ter plaatse verholpen bevindingen',
+      es: 'Hallazgos corregidos in situ', it: 'Rilievi corretti sul posto', pt: 'Constatações corrigidas no local'
+    },
+    "Rapport d'audit": {
+      en: 'Audit report', de: 'Auditbericht', nl: 'Auditrapport',
+      es: 'Informe de auditoría', it: 'Rapporto di audit', pt: 'Relatório de auditoria'
+    },
+    "Compte rendu d'intervention et d'audit": {
+      en: 'Service and audit report', de: 'Service- und Auditbericht', nl: 'Service- en auditrapport',
+      es: 'Informe de intervención y auditoría', it: 'Rapporto di intervento e audit', pt: 'Relatório de intervenção e auditoria'
+    },
     'Photo': { en: 'Photo', de: 'Foto', nl: 'Foto', es: 'Foto', it: 'Foto', pt: 'Foto' },
     'Événements': { en: 'Events', de: 'Ereignisse', nl: 'Gebeurtenissen', es: 'Eventos', it: 'Eventi', pt: 'Eventos' },
     'Texte': { en: 'Text', de: 'Text', nl: 'Tekst', es: 'Texto', it: 'Testo', pt: 'Texto' },
@@ -424,6 +498,11 @@
       it: 'Sede legale e stabilimento n. 1 – 1, rue du Jariel, ZAC Les Longs Sillons, 77120 Coulommiers, Francia',
       pt: 'Sede social e unidade de produção n.º 1 – 1, rue du Jariel, ZAC Les Longs Sillons, 77120 Coulommiers, França'
     },
+    '50 allée des érables, 01150 Blyes, France': {
+      en: '50 allée des érables, 01150 Blyes, France', de: '50 allée des érables, 01150 Blyes, Frankreich',
+      nl: '50 allée des érables, 01150 Blyes, Frankrijk', es: '50 allée des érables, 01150 Blyes, Francia',
+      it: '50 allée des érables, 01150 Blyes, Francia', pt: '50 allée des érables, 01150 Blyes, França'
+    },
     'Site de production n°2 – 50 allée des érables, 01150 Blyes, France': {
       en: 'Production site no. 2 – 50 allée des érables, 01150 Blyes, France',
       de: 'Produktionsstätte Nr. 2 – 50 allée des érables, 01150 Blyes, Frankreich',
@@ -602,6 +681,13 @@
   Object.keys(DICO).forEach(function (fr) { INDEX[cle(fr)] = fr; });
   /* Libellés traduisibles en début de chaîne : on retrouve l'entrée exacte du
      dictionnaire (« mecanique » -> « Mécanique »). */
+  /* Titres de sections numérotés (« 6. Travaux réalisés ») : le numéro est recalculé
+     à l'impression (« 2. Travaux réalisés »), on retrouve donc l'entrée par son texte. */
+  const INDEX_TITRES = {};
+  Object.keys(DICO).forEach(function (fr) {
+    const m = /^\d+\.\s+(.+)$/.exec(fr);
+    if (m && !INDEX_TITRES[cle(m[1])]) INDEX_TITRES[cle(m[1])] = fr;
+  });
   const INDEX_PREFIXES = {};
   PREFIXABLES.forEach(function (mot) {
     const ref = INDEX[cle(mot)];
@@ -651,6 +737,18 @@
       if (ref) {
         const t = DICO[ref][code];
         if (t) return majusculesSiBesoin(txt, t);
+      }
+
+      /* 1 bis. titre de section numéroté : « 3. Points de priorité haute » est traduit
+         quel que soit son numéro, le numéro est conservé. */
+      const mn = /^(\d+\s*[.)]\s*)(\S.*)$/.exec(s);
+      if (mn) {
+        const refT = INDEX_TITRES[cle(mn[2])];
+        if (refT && DICO[refT][code]) {
+          return majusculesSiBesoin(txt, mn[1] + DICO[refT][code].replace(/^\d+\.\s+/, ''));
+        }
+        const t2 = I18N.traduire(mn[2], code);
+        if (t2 !== mn[2]) return majusculesSiBesoin(txt, mn[1] + t2);
       }
 
       /* 2. libellés composés (numéro, téléphone, date, page, destinataire…) */

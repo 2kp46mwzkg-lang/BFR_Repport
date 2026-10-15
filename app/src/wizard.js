@@ -1,9 +1,14 @@
 /* =========================================================================
    wizard.js — Assistant « Ajouter un évènement » en 4 étapes
-     1. Domaine   : Mécanique / Électrique / Automatisme
+     1. Nature    : Travail réalisé (ce que le technicien a fait)
+                    ou Constat (ce qu'il a observé)
+        Domaine   : Mécanique / Électrique / Automatisme
      2. Annotation: texte écrit ou dicté (+ relecture vocale)
      3. Photo     : prise de vue puis annotation au doigt
-     4. Catégorie : Sécurité / Urgent / Priorité haute / basse / Informatif
+     4. Travail   : Résultat — Terminé (travail prévu) / Résolu /
+                    Partiellement résolu / À surveiller
+        Constat   : Catégorie — Sécurité / Urgent / Priorité haute / basse /
+                    Informatif, + « Corrigé sur place »
    L'évènement est enregistré dès la première étape et reste modifiable :
    on peut rouvrir l'assistant à tout moment, rien n'est perdu.
    ========================================================================= */
@@ -11,6 +16,14 @@
   'use strict';
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  /* Résultat d'un travail réalisé (mêmes clés que Report.RESULTATS). */
+  const RESULTATS = [
+    { id: 'termine', libelle: 'Terminé', note: 'Travail prévu (entretien, remplacement planifié…), réalisé comme prévu.', couleur: '#0f766e', fond: '#ccfbf1' },
+    { id: 'resolu', libelle: 'Résolu', note: 'Le problème est réglé.', couleur: '#15803d', fond: '#dcfce7' },
+    { id: 'partiel', libelle: 'Partiellement résolu', note: 'Amélioration, mais il reste quelque chose à faire.', couleur: '#c2410c', fond: '#ffedd5' },
+    { id: 'surveiller', libelle: 'À surveiller', note: 'Fonctionne, à contrôler lors de la prochaine visite.', couleur: '#b45309', fond: '#fef3c7' }
+  ];
 
   class Assistant {
     constructor(evenement, ctx) {
@@ -32,6 +45,7 @@
 
     domaines() { return this.S.domaines || []; }
     categories() { return this.S.categories || []; }
+    estTravail() { return this.ev.nature === 'travail'; }
 
     ouvrir() {
       const icoClose = (window.ICO && window.ICO.close(20)) || '✕';
@@ -40,7 +54,7 @@
       overlay.innerHTML = `
         <div class="assistant-bar">
           <button type="button" class="iconbtn" data-a="fermer">${icoClose}</button>
-          <div class="assistant-titre">Évènement</div>
+          <div class="assistant-titre" id="assistantTitre">Évènement</div>
           <button type="button" class="btn sm" data-a="enregistrer">Enregistrer</button>
         </div>
         <div class="assistant-progres" id="assistantProgres"></div>
@@ -65,6 +79,21 @@
           else if (a === 'relire') this.relire();
           return;
         }
+        const n = e.target.closest('[data-nature]');
+        if (n) {
+          this.ev.nature = n.dataset.nature;
+          this.maj(); this.rendre();
+          return;
+        }
+        const res = e.target.closest('[data-resultat]');
+        if (res) {
+          this.ev.resultat = res.dataset.resultat;
+          this.ev.heure = this.ev.heure || new Date().toISOString();
+          this.maj();
+          this.toast('Travail enregistré');
+          this.fermer();
+          return;
+        }
         const d = e.target.closest('[data-domaine]');
         if (d) {
           this.ev.domaine = d.dataset.domaine;
@@ -75,9 +104,10 @@
         const c = e.target.closest('[data-categorie]');
         if (c) {
           this.ev.categorie = c.dataset.categorie;
+          if (!this.ev.nature) this.ev.nature = 'constat';
           this.ev.heure = this.ev.heure || new Date().toISOString();
           this.maj();
-          this.toast('Évènement enregistré');
+          this.toast('Constat enregistré');
           this.fermer();
           return;
         }
@@ -106,11 +136,17 @@
       overlay.addEventListener('input', (e) => {
         if (e.target.id === 'evTexte') {
           this.ev.texte = e.target.value;
+          this.texteModifiePendantDictee(e.target.value);
           this.maj();
         }
       });
 
       overlay.addEventListener('change', (e) => {
+        if (e.target.id === 'evCorrige') {
+          this.ev.corrige = !!e.target.checked;
+          this.maj();
+          return;
+        }
         if (e.target.id === 'evMachine') {
           const val = e.target.value;
           const mach = this.machines.find(m => (m.id && m.id === val) || m.designation === val);
@@ -134,10 +170,11 @@
 
     enregistrer() {
       if (!this.ev.domaine) { this.aller(1); this.toast('Choisissez d\'abord le domaine'); return; }
+      if (!this.ev.nature) this.ev.nature = 'constat';
       if (!this.ev.categorie) this.ev.categorie = 'INFO';
       this.ev.heure = this.ev.heure || new Date().toISOString();
       this.maj();
-      this.toast('Évènement enregistré');
+      this.toast(this.estTravail() ? 'Travail enregistré' : 'Constat enregistré');
       this.fermer();
     }
 
@@ -160,6 +197,7 @@
       if (n < 1 || n > 4) return;
       // le domaine est obligatoire dès la sortie de l'étape 1 (avant : bloqué seulement à l'étape 3)
       if (n >= 2 && !this.ev.domaine) { this.toast('Choisissez d\'abord le domaine'); return; }
+      if (this.ecoute && n !== 2) this.arreterDictee();
       this.etape = n;
       this.rendre();
     }
@@ -172,9 +210,11 @@
         if (i === this.etape) cls.push('actif');
         return `<span class="${cls.join(' ')}"></span>`;
       }, this).join('') + `<span class="pas-libelle">Étape ${this.etape}/4 — ${
-        ['Domaine', 'Annotation', 'Photo', 'Catégorie'][this.etape - 1]}</span>`;
+        ['Nature et domaine', 'Annotation', 'Photo', this.estTravail() ? 'Résultat' : 'Catégorie'][this.etape - 1]}</span>`;
+      this.overlay.querySelector('#assistantTitre').textContent = this.estTravail() ? 'Travail réalisé' : 'Constat';
 
-      const rendus = { 1: () => this.etapeDomaine(), 2: () => this.etapeAnnotation(), 3: () => this.etapePhoto(), 4: () => this.etapeCategorie() };
+      const rendus = { 1: () => this.etapeDomaine(), 2: () => this.etapeAnnotation(), 3: () => this.etapePhoto(),
+        4: () => (this.estTravail() ? this.etapeResultat() : this.etapeCategorie()) };
       this.corps.innerHTML = rendus[this.etape]();
 
       const nav = [];
@@ -188,7 +228,17 @@
 
     etapeDomaine() {
       const d = this.domaineCourant();
-      return `<p class="assistant-question">Sur quel domaine porte cet évènement ?</p>
+      const travail = this.estTravail();
+      const icoT = (window.ICO && window.ICO.wrench(22)) || '🔧';
+      const icoC = (window.ICO && window.ICO.eye(22)) || '🔍';
+      return `<p class="assistant-question">Qu'enregistrez-vous ?</p>
+        <div class="natures">
+          <button type="button" class="nature travail${travail ? ' on' : ''}" data-nature="travail">
+            <span class="ico">${icoT}</span><span class="lib">Travail réalisé<small>ce que vous avez fait</small></span></button>
+          <button type="button" class="nature constat${travail ? '' : ' on'}" data-nature="constat">
+            <span class="ico">${icoC}</span><span class="lib">Constat<small>ce que vous avez observé</small></span></button>
+        </div>
+        <p class="assistant-question" style="margin-top:18px">Sur quel domaine ?</p>
         <div class="domaines">
           ${this.domaines().map(function (x) {
             const icoHtml = (window.ICO && window.ICO.domaine(x.id || x.icone, 22)) || '';
@@ -222,14 +272,21 @@
             }).join('')}
           </select>
         </div>` : '';
-      return `<p class="assistant-question">Que constatez-vous ?</p>
-        <p class="assistant-note">Écrivez, ou dictez à voix haute : le texte est ajouté automatiquement.</p>
+      const travail = this.estTravail();
+      const exemple = travail
+        ? "Ex. Remplacement de la courroie d'entraînement et réglage de la tension (flèche 8 mm). Essais à vide puis en production : plus de patinage ni de bruit au démarrage."
+        : "Ex. Courroie d'entraînement détendue : flèche mesurée 12 mm pour 8 mm maximum. Traces de patinage et gomme sur la poulie. Bruit caractéristique au démarrage.";
+      return `<p class="assistant-question">${travail ? "Qu'avez-vous fait ?" : 'Que constatez-vous ?'}</p>
+        <p class="assistant-note">Écrivez, ou touchez « Dicter » et parlez : vous pouvez faire des pauses pour réfléchir,
+          la dictée continue jusqu'à ce que vous touchiez « Arrêter la dictée ».</p>
         ${machSelect}
-        <textarea id="evTexte" class="ev-texte" rows="7" placeholder="Ex. Courroie d'entraînement détendue : flèche mesurée 12 mm pour 8 mm maximum. Traces de patinage et gomme sur la poulie. Bruit caractéristique au démarrage.">${esc(ev.texte || '')}</textarea>
+        <textarea id="evTexte" class="ev-texte" rows="7" placeholder="${esc(exemple)}">${esc(ev.texte || '')}</textarea>
         <div class="btnrow" style="margin-top:10px">
           <button class="btn ${this.ecoute ? 'or' : 'ghost'}" data-a="dictee">${icoMic} ${this.ecoute ? 'Arrêter la dictée' : 'Dicter'}</button>
           <button class="btn ghost" data-a="relire" ${ev.texte ? '' : 'disabled'}>${icoRelire} Relire</button>
         </div>
+        ${this.ecoute ? `<p class="dictee-active"><span class="dictee-point"></span>À l'écoute — prenez votre temps, les pauses n'arrêtent pas la dictée.
+          Vous pouvez aussi corriger le texte à la main pendant ce temps.</p>` : ''}
         <p class="assistant-note" style="margin-top:8px;font-size:12px;color:#64748b">💡 <em>Astuce : Vous pouvez aussi toucher le micro 🎙️ de votre clavier tactile pour dicter directement.</em></p>
         ${dispo ? '' : '<p class="assistant-note">Dictée intégrée indisponible sur ce navigateur : utilisez le micro de votre clavier Android.</p>'}`;
     }
@@ -260,10 +317,42 @@
         </div>`;
     }
 
+    /* Étape 4 d'un travail réalisé : le résultat obtenu. */
+    etapeResultat() {
+      const choisi = this.ev.resultat;
+      const checkHtml = (window.ICO && window.ICO.check(18)) || '✔';
+      return `<p class="assistant-question">Quel est le résultat ?</p>
+        <p class="assistant-note">Le travail apparaît dans la partie « Travaux réalisés » du rapport, avec ce résultat.
+          <strong>Terminé</strong> pour un travail prévu ; <strong>Résolu</strong>, <strong>Partiellement résolu</strong> ou <strong>À surveiller</strong> pour un dépannage.</p>
+        <div class="categories">
+          ${RESULTATS.map(function (r) {
+            return `<button type="button" class="categorie${choisi === r.id ? ' on' : ''}" data-resultat="${r.id}"
+              style="--c:${r.couleur};--f:${r.fond}">
+              <span class="lib">${esc(r.libelle)}<small class="sous">${esc(r.note)}</small></span>
+              <span class="fleche">${choisi === r.id ? checkHtml : '›'}</span></button>`;
+          }).join('')}
+        </div>
+        ${this.recap()}`;
+    }
+
+    recap() {
+      return `<div class="ev-recap">
+          <div class="ev-recap-ligne"><span>Nature</span><strong>${this.estTravail() ? 'Travail réalisé' : 'Constat'}</strong></div>
+          <div class="ev-recap-ligne"><span>Domaine</span><strong>${esc(this.libelleDomaine())}</strong></div>
+          ${this.ev.machineNom ? `<div class="ev-recap-ligne"><span>Machine</span><strong>${esc(this.ev.machineNom)}</strong></div>` : ''}
+          <div class="ev-recap-ligne"><span>Annotation</span><strong>${this.ev.texte ? this.ev.texte.length + ' caractère(s)' : 'vide'}</strong></div>
+          <div class="ev-recap-ligne"><span>Photos</span><strong>${(this.ev.photos || []).length}</strong></div>
+        </div>`;
+    }
+
     etapeCategorie() {
       const cats = this.categories(), choisi = this.ev.categorie;
-      return `<p class="assistant-question">Comment qualifier cet évènement ?</p>
-        <p class="assistant-note">Cette catégorie détermine la place de l'évènement dans le rapport : les problèmes de sécurité et les urgences apparaissent en premier.</p>
+      return `<p class="assistant-question">Comment qualifier ce constat ?</p>
+        <p class="assistant-note">Cette catégorie détermine la place du constat dans le rapport : les problèmes de sécurité et les urgences apparaissent en premier.</p>
+        <label class="corrige-case">
+          <input type="checkbox" id="evCorrige" ${this.ev.corrige ? 'checked' : ''}>
+          <span><strong>Corrigé sur place</strong><small>le défaut a été corrigé pendant l'intervention</small></span>
+        </label>
         <div class="categories">
           ${cats.map(function (c) {
             const icoHtml = (window.ICO && window.ICO.categorie(c.id || c.icone, 20)) || '';
@@ -275,12 +364,7 @@
               <span class="fleche">${choisi === c.id ? checkHtml : '›'}</span></button>`;
           }).join('')}
         </div>
-        <div class="ev-recap">
-          <div class="ev-recap-ligne"><span>Domaine</span><strong>${esc(this.libelleDomaine())}</strong></div>
-          ${this.ev.machineNom ? `<div class="ev-recap-ligne"><span>Machine</span><strong>${esc(this.ev.machineNom)}</strong></div>` : ''}
-          <div class="ev-recap-ligne"><span>Annotation</span><strong>${this.ev.texte ? this.ev.texte.length + ' caractère(s)' : 'vide'}</strong></div>
-          <div class="ev-recap-ligne"><span>Photos</span><strong>${(this.ev.photos || []).length}</strong></div>
-        </div>`;
+        ${this.recap()}`;
     }
 
     domaineCourant() { return this.domaines().find(x => x.id === this.ev.domaine); }
@@ -468,43 +552,67 @@
       return b + sep + s;
     }
 
-    /* ---------- dictée / relecture ---------- */
+    /* ---------- dictée / relecture ----------
+       La dictée reste active jusqu'à ce qu'on touche « Arrêter la dictée ».
+       Le moteur de reconnaissance du navigateur, lui, s'arrête tout seul après
+       quelques secondes de silence : on le relance aussitôt, sans perdre le texte,
+       pour laisser le temps de réfléchir entre deux phrases.
+       Garde-fous : arrêt définitif si le micro est refusé ou absent, si les
+       relances échouent en boucle, en quittant l'étape Annotation, ou après
+       3 minutes sans aucune parole (téléphone oublié dans la poche). */
     basculerDictee() {
-      if (this.ecoute) { this.arreterDictee(); this.rendre(); return; }
+      if (this.ecoute) { this.arreterDictee(); this.rendre(); this.toast('Dictée arrêtée'); return; }
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) { this.toast('Dictée non disponible : utilisez le micro du clavier'); return; }
+      this.ecoute = true;
+      this.echecsRelance = 0;
+      this.derniereParole = Date.now();
+      if (!this.demarrerSession(SR)) { this.ecoute = false; this.toast('Micro indisponible'); return; }
+      this.surveillerSilence();
+      this.toast('Dictée en cours — touchez « Arrêter la dictée » quand vous avez fini');
+      this.rendre();
+    }
+
+    /* Une session de reconnaissance, de son démarrage jusqu'à son arrêt par le
+       navigateur (silence) ou par le technicien. */
+    demarrerSession(SR) {
       const { normaliserDictee, mergeFinalHypotheses, fusionnerChevauchement, eliminerRepetitionsConsecutives, appliquerPonctuationVocale, fusionnerAvecBase } = Assistant;
+      const self = this;
       const rec = new SR();
       rec.lang = 'fr-FR';
       rec.continuous = true;
       rec.interimResults = true;
-      const self = this;
-      // Texte initial présent avant le début de cette session de dictée (immuable pendant la session)
-      const baseInitiale = (self.ev.texte || '').trim();
-      const finalsByIndex = [];
+      /* base : texte du champ au début de la session (ou après une correction à la
+         main) ; debut : premier résultat de la session à prendre en compte. */
+      const session = { base: (self.ev.texte || '').trim(), debut: 0, finals: [], vus: 0, entendu: false, depart: Date.now() };
 
       rec.onresult = function (e) {
-        if (!e || !e.results) return;
+        // résultats d'une session remplacée : ignorés (les derniers mots d'une
+        // session qu'on vient d'arrêter sont, eux, encore acceptés)
+        if (!e || !e.results || (self.reconnaissance !== rec && self.recArretee !== rec)) return;
+        session.vus = e.results.length;
 
         let interimTexte = '';
-        const start = Math.max(0, e.resultIndex || 0);
+        const start = Math.max(session.debut, e.resultIndex || 0);
 
-        for (let i = 0; i < e.results.length; i++) {
+        for (let i = session.debut; i < e.results.length; i++) {
           const res = e.results[i];
           const morceau = (res[0] && res[0].transcript) || '';
           const txtNormalise = normaliserDictee(morceau);
           if (!txtNormalise) continue;
 
           if (res.isFinal) {
-            finalsByIndex[i] = txtNormalise;
+            session.finals[i] = txtNormalise;
           } else if (i >= start) {
             interimTexte = txtNormalise;
           }
         }
+        session.entendu = true;
+        self.derniereParole = Date.now();
 
         let committed = [];
-        for (let i = 0; i < finalsByIndex.length; i++) {
-          const piece = finalsByIndex[i];
+        for (let i = 0; i < session.finals.length; i++) {
+          const piece = session.finals[i];
           if (!piece) continue;
           committed = mergeFinalHypotheses(committed, piece);
         }
@@ -534,7 +642,7 @@
         sessionTexte = appliquerPonctuationVocale(sessionTexte);
 
         // Fusion sans doublon avec le texte qui existait déjà dans le champ
-        const texteTotal = fusionnerAvecBase(baseInitiale, sessionTexte);
+        const texteTotal = fusionnerAvecBase(session.base, sessionTexte);
 
         self.ev.texte = texteTotal;
         const champ = (self.corps && self.corps.querySelector('#evTexte')) || document.querySelector('#evTexte');
@@ -546,33 +654,83 @@
       };
 
       rec.onerror = function (err) {
-        if (err && err.error === 'no-speech') return;
-        self.arreterDictee();
-        self.rendre();
-      };
-      rec.onend = function () {
-        if (self.ecoute) {
-          self.ecoute = false;
-          self.rendre();
+        const code = err && err.error;
+        // silence ou arrêt volontaire : la relance (ou non) se fait dans onend
+        if (!code || code === 'no-speech' || code === 'aborted') return;
+        const definitif = {
+          'not-allowed': 'Micro refusé : autorisez le micro pour ce site dans les réglages du navigateur',
+          'service-not-allowed': 'Dictée refusée par le téléphone : utilisez le micro du clavier',
+          'audio-capture': 'Aucun micro disponible',
+          'network': 'Dictée impossible sans réseau : utilisez le micro du clavier'
+        }[code];
+        if (definitif && self.reconnaissance === rec) {
+          self.arreterDictee();
+          if (self.overlay.isConnected) self.rendre();
+          self.toast(definitif);
         }
+        // autres erreurs : onend relance, dans la limite des échecs autorisés
       };
 
+      rec.onend = function () {
+        if (self.reconnaissance !== rec || !self.ecoute) return;   // arrêt voulu ou session remplacée
+        // une session qui s'arrête aussitôt sans rien entendre = relance qui échoue
+        const avortee = !session.entendu && (Date.now() - session.depart) < 1500;
+        self.echecsRelance = avortee ? (self.echecsRelance || 0) + 1 : 0;
+        const enPause = function () {
+          self.arreterDictee();
+          if (self.overlay.isConnected) self.rendre();
+          self.toast('Dictée en pause — touchez « Dicter » pour reprendre');
+        };
+        if (self.echecsRelance >= 4) { enPause(); return; }
+        setTimeout(function () {
+          if (!self.ecoute || self.reconnaissance !== rec) return;
+          if (!self.demarrerSession(SR)) enPause();
+        }, avortee ? 600 : 120);
+      };
+
+      this.reconnaissance = rec;
+      this.session = session;
       try {
         rec.start();
       } catch (e) {
-        self.toast('Micro indisponible');
-        return;
+        this.reconnaissance = null;
+        this.session = null;
+        return false;
       }
-      this.reconnaissance = rec;
-      this.ecoute = true;
-      this.toast('Dictée en cours… parlez');
-      this.rendre();
+      return true;
+    }
+
+    /* Correction à la main pendant la dictée : le texte du champ devient la nouvelle
+       base, et seuls les mots dictés ensuite s'y ajoutent. */
+    texteModifiePendantDictee(valeur) {
+      const s = this.session;
+      if (!this.ecoute || !s) return;
+      s.base = String(valeur || '').trim();
+      s.debut = s.vus;
+      s.finals = [];
+    }
+
+    /* Coupe la dictée après 3 minutes sans aucune parole. */
+    surveillerSilence() {
+      clearInterval(this.minuterieSilence);
+      this.minuterieSilence = setInterval(() => {
+        if (!this.ecoute) { clearInterval(this.minuterieSilence); return; }
+        if (Date.now() - (this.derniereParole || 0) > 180000) {
+          this.arreterDictee();
+          if (this.overlay.isConnected) this.rendre();
+          this.toast('Dictée arrêtée après 3 minutes sans parole');
+        }
+      }, 10000);
     }
 
     arreterDictee() {
-      if (this.reconnaissance) { try { this.reconnaissance.stop(); } catch (e) {} }
+      this.ecoute = false;            // d'abord : empêche toute relance automatique
+      clearInterval(this.minuterieSilence);
+      const rec = this.reconnaissance;
       this.reconnaissance = null;
-      this.ecoute = false;
+      this.recArretee = rec || null;   // ses derniers mots peuvent encore arriver
+      this.session = null;
+      if (rec) { try { rec.stop(); } catch (e) {} }
     }
 
     relire() {
@@ -597,6 +755,10 @@
         texte: opts.texte || '',
         photos: opts.photos || [],
         categorie: opts.categorie || '',
+        // « travail » (travail réalisé) ou « constat » (observation avec priorité)
+        nature: opts.nature === 'travail' ? 'travail' : 'constat',
+        resultat: '',
+        corrige: false,
         heure: new Date().toISOString(),
         machineId: opts.machineId || '',
         machineNom: opts.machineNom || ''

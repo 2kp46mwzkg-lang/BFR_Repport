@@ -267,7 +267,6 @@
       ajouter(i, 'actions', 'Travaux réalisés');
       ajouter(i, 'aPrevoir', 'Travaux à prévoir');
       ajouter(i, 'resumeTechnicien', 'Synthèse');
-      ajouter(i, 'travauxTermines', 'Travaux terminés');
       (i.evenements || []).forEach(function (ev, k) {
         ajouter(ev, 'texte', 'Évènement ' + (k + 1));
         (ev.photos || []).forEach(function (ph) { ajouter(ph, 'legende', 'Légende de photo'); });

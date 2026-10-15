@@ -377,7 +377,8 @@
       if (rapport.actions) rapport.actions = corriger(rapport.actions);
       if (rapport.aPrevoir) rapport.aPrevoir = corriger(rapport.aPrevoir);
       if (rapport.resumeTechnicien) rapport.resumeTechnicien = corriger(rapport.resumeTechnicien);
-      if (rapport.travauxTermines) rapport.travauxTermines = corriger(rapport.travauxTermines);
+      // « Travaux terminés » est un choix de liste (Oui / Non / Partiellement) : on n'y touche
+      // pas. Le corriger ajoutait un point (« Oui. ») et la liste n'affichait plus le choix.
 
       // Évènements et légendes de photos
       (rapport.evenements || []).forEach(function (ev) {
