@@ -43,14 +43,18 @@ La liste des clients n'est **pas** dans l'application publiée : chacun la charg
 téléphone. Elle reste ensuite dans le téléphone et s'utilise **hors connexion**.
 
 1. Récupérer le fichier de la liste, fourni par le responsable SAV :
-   - `clients-bfr-AAAA-MM-JJ.json` (recommandé) ou
-   - l'export CSV du classeur « COORDONNÉES CLIENTS ».
+   - le classeur « COORDONNÉES CLIENTS » lui-même (`.xlsx`, Excel ou téléchargé depuis
+     Google Sheets : Fichier → Télécharger → Microsoft Excel), logos et techniciens compris ;
+   - ou `clients-bfr-AAAA-MM-JJ.json`, ou un export CSV du classeur.
    On le reçoit par mail, messagerie d'équipe ou Bluetooth.
    *Un collègue qui l'a déjà peut aussi vous l'envoyer : ☰ → Réglages → **Exporter la liste
    actuelle** — le fichier obtenu s'importe de la même façon.*
 2. Dans l'application : **☰ → Réglages → Liste clients**.
-3. Appuyer sur **📥 Mettre à jour la liste (export CSV du classeur ou JSON)** et choisir le fichier.
-4. Le message **« 114 client(s) chargé(s) ✔ — disponible hors connexion »** confirme le chargement.
+3. Appuyer sur **📥 Mettre à jour la liste (classeur Excel .xlsx, CSV ou JSON)** et choisir le
+   fichier (sur iPhone : « Parcourir » → l'app Fichiers, ou directement depuis la pièce jointe
+   du mail → partager → enregistrer dans Fichiers).
+4. Le message **« 114 client(s) chargé(s), 2 logo(s), 15 technicien(s) — disponible hors
+   connexion »** confirme le chargement.
 5. Vérifier : dans une intervention, **Client & machine → Client**, taper 3 lettres (`ENT`, `CFR`…)
    → les propositions apparaissent avec la ville et le contact.
 

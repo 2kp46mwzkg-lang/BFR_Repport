@@ -13,6 +13,7 @@ Code de sortie 0 = tout est bon ; 1 = au moins un test a échoué (la GitHub
 Action ne publie alors pas la nouvelle version).
 """
 import asyncio
+import base64
 import functools
 import html
 import http.server
@@ -591,8 +592,87 @@ async def test_dictee(nav, adresse):
     return t
 
 
+DONNEES = os.path.join(RACINE, 'tests', 'donnees')
+
+
+async def test_import_clients(nav, adresse):
+    """Import de la liste clients : classeur .xlsx (logos, techniciens), CSV d'Excel, nettoyage."""
+    t = await Telephone(nav, adresse).ouvrir()
+    pg = t.pg
+    await t.identite()
+    # ancienne version : un .xlsx importé comme un CSV laissait une liste illisible
+    await pg.evaluate('''() => localStorage.setItem("sav3.clientsListe",
+      JSON.stringify([{ nom: "PK\\u0003\\u0004\\u0014", adresse: "x" }, { nom: "\\uFFFD\\u0001", adresse: "y" }]))''')
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(800)
+    verifier(await pg.evaluate('() => localStorage.getItem("sav3.clientsListe")') is None,
+             'la liste illisible d\'une ancienne version doit être écartée')
+    # 1. classeur .xlsx choisi dans les réglages
+    await t.menu('reglages')
+    await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-exemple.xlsx'))
+    await pg.wait_for_timeout(1500)
+    liste = await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]")')
+    noms = [c['nom'] for c in liste]
+    verifier(noms == ['FROMAGERIE DU JURA', 'LAITERIE DES ALPES', 'BISCUITERIE NORD', 'CONSERVERIE ÉTÉ'],
+             'clients du classeur mal lus : %s' % noms)
+    jura = liste[0]
+    verifier(jura['contact'] == 'Paul MARTIN' and jura['tel'] == '06 12 34 56 78' and jura['ville'] == 'LONS-LE-SAUNIER',
+             'fiche client mal découpée : %s' % {k: jura[k] for k in ('contact', 'tel', 'ville')})
+    verifier(jura['logo'].startswith('data:image/png;base64,'), 'logo du classeur non repris')
+    techs = await pg.evaluate('() => Clients.listeTechniciens().map(t => t.nom)')
+    verifier(techs == ['Jean DUPONT', 'Marie DURAND'], 'techniciens du classeur : %s' % techs)
+    # recherche « 3 lettres » dans la fiche client
+    await t.fermer_feuilles()
+    await pg.click('[data-a="editer-client"] >> nth=0')
+    await pg.wait_for_timeout(400)
+    await pg.fill('#cliRecherche', 'lai')
+    await pg.wait_for_timeout(400)
+    verifier('LAITERIE DES ALPES' in await pg.inner_text('.sheet.open'), 'le client importé n\'est pas proposé à la saisie')
+    # collègue sur site : propositions de l'appli (plus de liste native <datalist>, noire en mode sombre)
+    verifier(not await pg.query_selector('datalist'), 'il ne doit plus y avoir de <datalist> natif')
+    await pg.click('#btnAjouterTechnicien')
+    await pg.wait_for_timeout(300)
+    await pg.click('[data-t-k="nom"][data-t-i="1"]')
+    await pg.type('[data-t-k="nom"][data-t-i="1"]', 'mar')
+    await pg.wait_for_timeout(300)
+    props = await pg.eval_on_selector_all('.sugg-champ:not([hidden]) [data-sugg-val]', 'els => els.map(e => e.dataset.suggVal)')
+    verifier(props == ['Marie DURAND'], 'propositions de collègues : %s' % props)
+    await pg.click('.sugg-champ [data-sugg-val="Marie DURAND"]')
+    await pg.wait_for_timeout(300)
+    verifier(await pg.input_value('[data-t-k="nom"][data-t-i="1"]') == 'Marie DURAND', 'collègue choisi non inscrit dans le champ')
+    verifier(not await pg.query_selector('.sugg-champ:not([hidden])'), 'la liste de propositions doit se fermer après le choix')
+    await pg.click('.sheet.open [data-a="ok"]')
+    await pg.wait_for_timeout(1200)
+    techs = [x.get('nom') for x in (await t.rapport_stocke()).get('techniciens', [])]
+    verifier('Marie DURAND' in techs, 'collègue choisi non enregistré dans le rapport : %s' % techs)
+    await t.fermer_feuilles()
+    # 2. même classeur sur un navigateur sans DecompressionStream (anciens iPhone)
+    b64 = base64.b64encode(open(os.path.join(DONNEES, 'clients-exemple.xlsx'), 'rb').read()).decode()
+    res = await pg.evaluate('''async (b64) => {
+      const bin = atob(b64); const u = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      const sauve = window.DecompressionStream; window.DecompressionStream = undefined;
+      try { return await Clients.importerFichier(u.buffer); } finally { window.DecompressionStream = sauve; }
+    }''', b64)
+    verifier(res.get('n') == 4 and res.get('logos') == 1, 'lecture sans DecompressionStream : %s' % res)
+    # 3. CSV enregistré par Excel (séparateur « ; », encodage Windows)
+    await t.menu('reglages')
+    await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-exemple-excel.csv'))
+    await pg.wait_for_timeout(1000)
+    noms = await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]").map(c => c.nom)')
+    verifier('CONSERVERIE ÉTÉ' in noms and len(noms) == 4, 'CSV Excel (accents) mal lu : %s' % noms)
+    # 4. un fichier qui n'est pas une liste : message, liste conservée
+    await t.menu('reglages')
+    await pg.set_input_files('#clientsImport', os.path.join(PHOTOS, 'portrait.jpg'))
+    await pg.wait_for_timeout(1000)
+    verifier(len(await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]")')) == 4,
+             'une image ne doit pas remplacer la liste clients')
+    await t.fermer()
+    return t
+
+
 TESTS = [test_identite_et_numeros, test_photos_conservees, test_rapport_pdf_et_word,
-         test_historique_et_menage, test_reglages, test_sav_et_audit, test_dictee]
+         test_historique_et_menage, test_reglages, test_sav_et_audit, test_dictee, test_import_clients]
 # BFR_TEST=nom_du_test : ne lancer qu'un seul test (ex. BFR_TEST=test_rapport_pdf_et_word)
 if os.environ.get('BFR_TEST'):
     TESTS = [f for f in TESTS if f.__name__ == os.environ['BFR_TEST']]

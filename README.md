@@ -70,8 +70,9 @@ bouton 💾 / l'export JSON du menu ☰). **L'installation PWA via GitHub Pages 
 Le choix remplit d'un coup le nom, l'adresse, la ville, le contact (nom seul), la fonction et
 le téléphone du client. Ce qui manque à la liste (téléphone, e-mail, logo, contact) se saisit
 à la main : c'est **mémorisé dans le téléphone** et reproposé aux interventions suivantes.
-La liste se met à jour depuis ☰ → Réglages → *Liste clients* (export CSV du classeur), et reste
-disponible hors connexion.
+La liste se met à jour depuis ☰ → Réglages → *Liste clients* : le classeur « COORDONNÉES CLIENTS »
+s'importe **tel quel en .xlsx** (Excel ou Google Sheets, logos et rubrique *Techniciens* compris),
+ou en CSV / JSON. Elle reste disponible hors connexion.
 
 **Avant la première intervention** : ☰ → **Mes informations** (la fiche s'ouvre toute seule
 au premier lancement). On y saisit **Prénom, Nom, Téléphone, E-mail**, la fonction et — si
@@ -238,7 +239,7 @@ dans le téléphone (ils ne modifient pas le dépôt) :
 - **canevas du rapport** (ordre et contenu des sections) en JSON ;
 - **domaines** (mécanique / électrique / automatisme) et **catégories** (libellé, icône, couleur) en JSON ;
 - mention légale de signature du client ;
-- **liste clients** (import de l'export CSV du classeur, disponible hors connexion).
+- **liste clients** (import du classeur .xlsx, d'un CSV ou d'un JSON, disponible hors connexion).
 
 Pour changer les valeurs par défaut **pour tous les techniciens** (nouvelle installation),
 modifier `settingsDefaut` dans `app/src/app.js` puis relancer `build.py`.

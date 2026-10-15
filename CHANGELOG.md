@@ -1,3 +1,33 @@
+# Listes de propositions — 15/10/2026
+
+- Les propositions des champs **Collègue sur site**, **Machine / équipement** et **Lieu
+  d'intervention** s'affichaient dans le menu natif du navigateur (`<datalist>`) : noir en
+  mode sombre (iPhone, Android, Windows), police et couleurs impossibles à régler. Elles sont
+  remplacées par la même liste que celle des clients : fond blanc, noms en bleu BFR, 8
+  propositions au plus, filtrées dès la première lettre (sans tenir compte des accents).
+- Les messages en haut de l'écran (« 114 client(s) chargé(s)… ») ne se replient plus en
+  une bulle étroite et haute : ils prennent la largeur du texte.
+
+# Import de la liste clients — 15/10/2026
+
+- **Le classeur Excel s'importe tel quel** (Réglages → Liste clients → « Mettre à jour la
+  liste ») : fichier `.xlsx` d'Excel ou téléchargé depuis Google Sheets, sans passer par un
+  export CSV. Avant, seuls le CSV et le JSON étaient lus : sur iPhone le `.xlsx` n'était pas
+  sélectionnable, et sur ordinateur (Edge, Chrome) il était lu comme du texte et donnait une
+  liste de « clients » illisibles.
+- Les **logos** posés dans la colonne Logo du classeur sont repris avec chaque client.
+- La rubrique **« Techniciens »** du classeur alimente la liste des collègues proposés sur
+  le terrain (« Ajouter un collègue sur site »).
+- Les colonnes sont reconnues par leur titre (Client, Adresse, Contact, Logo).
+- CSV enregistré par Excel sous Windows (accents en encodage Windows, séparateur « ; ») :
+  les accents sont maintenant corrects.
+- Un fichier qui n'est pas une liste (image, ancien .xls…) affiche un message clair et ne
+  remplace plus la liste en place ; une liste illisible importée par l'ancienne version est
+  écartée automatiquement.
+- Fonctionne hors connexion et sans bibliothèque externe ; sur les iPhone plus anciens
+  (sans décompression intégrée au navigateur), l'appli décompresse le classeur elle-même.
+- « Exporter la liste actuelle » inclut aussi la liste des techniciens.
+
 # « Travaux terminés » — 15/10/2026
 
 - **L'appli « oubliait » le choix Travaux terminés.** La correction automatique du

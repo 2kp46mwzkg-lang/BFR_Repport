@@ -1860,19 +1860,24 @@
     const f = (k, label, opt) => {
       opt = opt || {};
       const val = getPath(R, k) || '';
-      return `<div class="field"><label>${esc(label)}</label><input type="${opt.type || 'text'}" data-fk="${k}" value="${esc(val)}" placeholder="${esc(opt.ph || '')}"${opt.list ? ' list="' + opt.list + '"' : ''}></div>`;
+      return `<div class="field"><label>${esc(label)}</label><input type="${opt.type || 'text'}" data-fk="${k}" value="${esc(val)}" placeholder="${esc(opt.ph || '')}"${opt.list ? ' data-sugg="' + opt.list + '" autocomplete="off"' : ''}></div>`;
     };
-    const dl = (id, arr) => `<datalist id="${id}">${[...new Set((arr || []).filter(Boolean))].slice(-30).map(v => `<option value="${esc(v)}">`).join('')}</datalist>`;
     const histo = Store.get(K.rapports, []);
     const nbClients = Clients.liste().length;
     const techsBFR = (Clients.listeTechniciens ? Clients.listeTechniciens() : (window.TECHNICIENS_BFR || [])).map(t => t.nom);
+    /* Propositions des champs Lieu, Machine et Collègue. Elles remplacent les listes
+       <datalist> du navigateur : leur menu natif s'affichait en noir (mode sombre du
+       téléphone ou de Windows) et ne pouvait pas prendre les couleurs de l'appli. */
+    const uniques = (arr) => [...new Set((arr || []).map(v => String(v || '').trim()).filter(Boolean))];
+    const SOURCES_SUGG = {
+      dlLieux: uniques(histo.map(r => r.client && r.client.lieu)).reverse(),            // les plus récents d'abord
+      dlMachines: uniques(histo.map(r => r.machine && r.machine.designation)).reverse(),
+      dlTechsBFR: uniques(techsBFR)
+    };
 
     const ouvrir = (e) => Ouvrir.ouvrir(e, `<div class="panel">
       <div class="grab"></div><h3>Client & machine</h3>
       <p class="sub">Ces informations figurent en tête du rapport.</p>
-      ${dl('dlLieux', histo.map(r => r.client && r.client.lieu))}
-      ${dl('dlMachines', histo.map(r => r.machine && r.machine.designation))}
-      ${dl('dlTechsBFR', techsBFR)}
       <div class="card"><h2>Client</h2>
         <div class="field"><label>Client</label>
           <input type="text" id="cliRecherche" autocomplete="off" value="${esc(R.client.nom || '')}"
@@ -1917,7 +1922,7 @@
                   <button type="button" class="btn sm danger" data-rm-machine="${idx + 1}" style="padding:2px 8px;font-size:0.8rem">${(ICO.trash && ICO.trash(12)) || ''} Retirer</button>
                 </div>
                 <div class="field"><label>Machine / équipement</label>
-                  <input type="text" data-m-k="designation" data-m-i="${idx + 1}" value="${esc(m.designation || '')}" placeholder="Ex. Ensacheuse, Convoyeur..." list="dlMachines"></div>
+                  <input type="text" data-m-k="designation" data-m-i="${idx + 1}" value="${esc(m.designation || '')}" placeholder="Ex. Ensacheuse, Convoyeur..." data-sugg="dlMachines" autocomplete="off"></div>
                 <div class="grid2">
                   <div class="field"><label>Modèle</label><input type="text" data-m-k="modele" data-m-i="${idx + 1}" value="${esc(m.modele || '')}" placeholder="Ex. FP-400"></div>
                   <div class="field"><label>N° de série</label><input type="text" data-m-k="serie" data-m-i="${idx + 1}" value="${esc(m.serie || '')}" placeholder="Ex. FP400-2020-001"></div>
@@ -1957,7 +1962,7 @@
                   <button type="button" class="btn sm danger" data-rm-technicien="${idx + 1}" style="padding:2px 8px;font-size:0.8rem">${(ICO.trash && ICO.trash(12)) || ''} Retirer</button>
                 </div>
                 <div class="field" style="margin-bottom:6px"><label>Nom du collègue</label>
-                  <input type="text" data-t-k="nom" data-t-i="${idx + 1}" value="${esc(t.nom || '')}" placeholder="Ex. Thomas BERNARD" list="dlTechsBFR"></div>
+                  <input type="text" data-t-k="nom" data-t-i="${idx + 1}" value="${esc(t.nom || '')}" placeholder="Ex. Thomas BERNARD" data-sugg="dlTechsBFR" autocomplete="off"></div>
                 <div class="field"><label>Fonction / Spécialité</label>
                   <input type="text" data-t-k="fonction" data-t-i="${idx + 1}" value="${esc(t.fonction || 'Technicien SAV')}" placeholder="Ex. Automaticien, Mécanicien..."></div>
               </div>`).join('')}
@@ -1976,6 +1981,48 @@
       <div class="btnrow"><button class="btn grey" data-a="fermer">Fermer</button>
         <button class="btn" data-a="ok">Valider</button></div>
     </div>`, (panneau) => {
+      /* ---------- Propositions sous les champs Lieu / Machine / Collègue ---------- */
+      const sansAccent = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const boiteSugg = (champ) => {
+        let b = champ.nextElementSibling;
+        if (!b || !b.classList.contains('sugg-champ')) {
+          b = document.createElement('div');
+          b.className = 'suggestions sugg-champ';
+          b.hidden = true;
+          champ.insertAdjacentElement('afterend', b);
+        }
+        return b;
+      };
+      const fermerSugg = (champ) => { const b = boiteSugg(champ); b.hidden = true; b.innerHTML = ''; };
+      const majSugg = (champ) => {
+        const q = sansAccent(champ.value.trim());
+        const liste = (SOURCES_SUGG[champ.dataset.sugg] || [])
+          .filter(v => (!q || sansAccent(v).indexOf(q) >= 0) && v !== champ.value.trim())
+          .slice(0, 8);
+        const b = boiteSugg(champ);
+        if (!liste.length) { fermerSugg(champ); return; }
+        b.hidden = false;
+        b.innerHTML = liste.map(v => `<button type="button" class="suggestion" data-sugg-val="${esc(v)}"><span class="sug-nom">${esc(v)}</span></button>`).join('');
+      };
+      panneau.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('input[data-sugg]')) majSugg(e.target); });
+      panneau.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('input[data-sugg]') && e.isTrusted) majSugg(e.target); });
+      panneau.addEventListener('focusout', (e) => {
+        if (!(e.target.matches && e.target.matches('input[data-sugg]'))) return;
+        const champ = e.target;
+        setTimeout(() => { if (document.activeElement !== champ) fermerSugg(champ); }, 250);
+      });
+      // le champ garde le focus (et le clavier reste ouvert) pendant qu'on touche une proposition
+      panneau.addEventListener('mousedown', (e) => { if (e.target.closest('[data-sugg-val]')) e.preventDefault(); });
+      panneau.addEventListener('click', (e) => {
+        const s = e.target.closest('[data-sugg-val]');
+        if (!s) return;
+        const b = s.closest('.sugg-champ'), champ = b && b.previousElementSibling;
+        if (!champ) return;
+        champ.value = s.dataset.suggVal;
+        fermerSugg(champ);
+        champ.dispatchEvent(new Event('input', { bubbles: true }));   // enregistrement comme une saisie
+      });
+
       $$('[data-fk]', panneau).forEach(el => {
         el.addEventListener('input', () => {
           setPath(R, el.dataset.fk, el.value);
@@ -1994,7 +2041,7 @@
               <button type="button" class="btn sm danger" data-rm-machine="${idx + 1}" style="padding:2px 8px;font-size:0.8rem">${(ICO.trash && ICO.trash(12)) || ''} Retirer</button>
             </div>
             <div class="field"><label>Machine / équipement</label>
-              <input type="text" data-m-k="designation" data-m-i="${idx + 1}" value="${esc(m.designation || '')}" placeholder="Ex. Ensacheuse, Convoyeur..." list="dlMachines"></div>
+              <input type="text" data-m-k="designation" data-m-i="${idx + 1}" value="${esc(m.designation || '')}" placeholder="Ex. Ensacheuse, Convoyeur..." data-sugg="dlMachines" autocomplete="off"></div>
             <div class="grid2">
               <div class="field"><label>Modèle</label><input type="text" data-m-k="modele" data-m-i="${idx + 1}" value="${esc(m.modele || '')}" placeholder="Ex. FP-400"></div>
               <div class="field"><label>N° de série</label><input type="text" data-m-k="serie" data-m-i="${idx + 1}" value="${esc(m.serie || '')}" placeholder="Ex. FP400-2020-001"></div>
@@ -2012,7 +2059,7 @@
               <button type="button" class="btn sm danger" data-rm-technicien="${idx + 1}" style="padding:2px 8px;font-size:0.8rem">${(ICO.trash && ICO.trash(12)) || ''} Retirer</button>
             </div>
             <div class="field" style="margin-bottom:6px"><label>Nom du collègue</label>
-              <input type="text" data-t-k="nom" data-t-i="${idx + 1}" value="${esc(t.nom || '')}" placeholder="Ex. Thomas BERNARD" list="dlTechsBFR"></div>
+              <input type="text" data-t-k="nom" data-t-i="${idx + 1}" value="${esc(t.nom || '')}" placeholder="Ex. Thomas BERNARD" data-sugg="dlTechsBFR" autocomplete="off"></div>
             <div class="field"><label>Fonction / Spécialité</label>
               <input type="text" data-t-k="fonction" data-t-i="${idx + 1}" value="${esc(t.fonction || 'Technicien SAV')}" placeholder="Ex. Automaticien, Mécanicien..."></div>
           </div>`).join('');
@@ -3433,14 +3480,15 @@
           ? `La liste du classeur « COORDONNÉES CLIENTS » est embarquée dans l'application
         (${Clients.base().length} client(s)) : tapez 3 lettres dans un rapport pour voir les correspondances.`
           : `Aucune liste n'est embarquée dans cette version de l'application : importez le fichier de la liste
-        (export CSV du classeur ou JSON) — elle sera conservée dans ce téléphone et restera disponible hors connexion.`}
+        (le classeur « COORDONNÉES CLIENTS » tel quel en .xlsx, un export CSV ou un JSON) — elle sera conservée dans ce téléphone et restera disponible hors connexion.`}
         Les téléphones, e-mails, logos et contacts saisis sur le terrain sont mémorisés sur ce téléphone
         (${Object.keys(Clients.memo()).length} fiche(s) enrichie(s)) et proposés la prochaine fois.</p>
         <div style="margin:10px 0">
           <button class="btn" type="button" data-a="ouvrir-annuaire" style="width:100%">${(ICO.users && ICO.users(16)) || ''} Ouvrir l'annuaire & gérer les fiches clients</button>
         </div>
-        <div class="filebtn"><input type="file" id="clientsImport" accept=".csv,.json,text/csv,application/json">
-          <label for="clientsImport">${(ICO.download && ICO.download(16)) || ''} Mettre à jour la liste (export CSV du classeur ou JSON)</label></div>
+        <div class="filebtn"><input type="file" id="clientsImport"
+            accept=".xlsx,.csv,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/comma-separated-values,application/json">
+          <label for="clientsImport">${(ICO.download && ICO.download(16)) || ''} Mettre à jour la liste (classeur Excel .xlsx, CSV ou JSON)</label></div>
         <p class="small">Le fichier remplace la liste précédente ; il est conservé dans le téléphone et reste
         disponible hors connexion. Le même bouton sert à transmettre la liste à un collègue (le fichier se
         transmet par mail, messagerie ou Bluetooth).</p>
@@ -3520,19 +3568,28 @@
         lecteur.onerror = () => toast('Lecture impossible');
         lecteur.readAsText(fichier, 'utf-8');
       });
+      /* Classeur .xlsx (Excel ou Google Sheets), CSV ou JSON : le fichier est lu en
+         octets puis reconnu par son contenu (et non par son nom ou son type, que
+         certains téléphones ne transmettent pas). */
       $('#clientsImport', panneau).addEventListener('change', (ev) => {
-        const fichier = ev.target.files && ev.target.files[0];
+        const champ = ev.target;
+        const fichier = champ.files && champ.files[0];
         if (!fichier) return;
         const lecteur = new FileReader();
-        lecteur.onload = () => {
-          const n = Clients.importer(lecteur.result);
-          if (!n) { toast('Fichier illisible : attendu un CSV du classeur ou un JSON'); return; }
-          toast(n + ' client(s) chargé(s) — disponible hors connexion', 3200);
-          ev.target.closest('.sheet').remove();
+        lecteur.onload = async () => {
+          let res;
+          try { res = await Clients.importerFichier(lecteur.result); }
+          catch (e) { res = { n: 0, erreur: 'Lecture impossible : ' + ((e && e.message) || e) }; }
+          champ.value = '';
+          if (!res.n) { toast(res.erreur || 'Fichier illisible', 5000); return; }
+          toast(res.n + ' client(s) chargé(s)' + (res.logos ? ', ' + res.logos + ' logo(s)' : '') +
+            (res.techniciens ? ', ' + res.techniciens + ' technicien(s)' : '') + ' — disponible hors connexion', 4000);
+          const feuille = champ.closest('.sheet');
+          if (feuille) feuille.remove();
           feuilleReglages();
         };
-        lecteur.onerror = () => toast('Lecture impossible');
-        lecteur.readAsText(fichier, 'utf-8');
+        lecteur.onerror = () => { champ.value = ''; toast('Lecture impossible'); };
+        lecteur.readAsArrayBuffer(fichier);
       });
       panneau.addEventListener('click', (e) => {
         const iconeCard = e.target.closest('[data-icone-id]');
@@ -3571,7 +3628,8 @@
           return;
         }
         if (e.target.closest('[data-a="clients-export"]')) {
-          const contenu = JSON.stringify({ clients: Clients.liste() }, null, 1);
+          const contenu = JSON.stringify({ clients: Clients.liste(),
+            techniciens: Clients.listeTechniciens().map(t => ({ nom: t.nom })) }, null, 1);
           telecharger(new Blob([contenu], { type: 'application/json' }), 'clients-bfr-' + todayISO() + '.json');
           toast('Liste exportée'); return;
         }
