@@ -5139,13 +5139,17 @@ ul.liste li { margin-bottom: 6px; }
 
     function u16(n) { return [n & 0xFF, (n >> 8) & 0xFF]; }
     function u32(n) { return [n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >>> 24) & 0xFF]; }
+    /* Date et heure du jour au format DOS (sinon les fichiers s'affichent datés de 1980). */
+    const d = new Date();
+    const heureDos = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
+    const dateDos = ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
 
     fichiers.forEach(function (f) {
       const nom = utf8(f.nom);
       const crc = crc32(f.donnees);
       const taille = f.donnees.length;
       const entete = new Uint8Array([].concat(
-        u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+        u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(heureDos), u16(dateDos),
         u32(crc), u32(taille), u32(taille), u16(nom.length), u16(0)
       ));
       morceaux.push(entete, nom, f.donnees);
@@ -5157,7 +5161,7 @@ ul.liste li { margin-bottom: 6px; }
     let tailleCentral = 0;
     central.forEach(function (c) {
       const e = new Uint8Array([].concat(
-        u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+        u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(heureDos), u16(dateDos),
         u32(c.crc), u32(c.taille), u32(c.taille), u16(c.nom.length), u16(0), u16(0),
         u16(0), u16(0), u32(0), u32(c.offset)
       ));
@@ -5608,7 +5612,7 @@ ul.liste li { margin-bottom: 6px; }
     return { w: (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19], h: (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23] };
   }
 
-  global.Docx = { Doc: DocWord, dataUrlToBytes: dataUrlToBytes, crc32: crc32, dimsJpeg: dimsJpeg, dimsPng: dimsPng, utf8: utf8 };
+  global.Docx = { Doc: DocWord, dataUrlToBytes: dataUrlToBytes, crc32: crc32, dimsJpeg: dimsJpeg, dimsPng: dimsPng, utf8: utf8, zip: zip };
 })(window);
 </script>
 <script>/* =========================================================================
@@ -6526,13 +6530,15 @@ ul.liste li { margin-bottom: 6px; }
       const p = this.pdf, C = this.C;
       if (!pcs || !pcs.length) return;
       const avecPhotos = pcs.some(it => it && it.photo);
-      const colPhotoW = avecPhotos ? 44 : 0;
+      /* Photos en grand : vignette de 2,5 cm (72 pt) dans une colonne de 2,9 cm. */
+      const TAILLE_PHOTO = 72;
+      const colPhotoW = avecPhotos ? TAILLE_PHOTO + 10 : 0;
       const remW = this.CW - colPhotoW;
-      const colDenomW = avecPhotos ? Math.round(remW * 0.35) : Math.round(this.CW * 0.36);
+      const colDenomW = avecPhotos ? Math.round(remW * 0.34) : Math.round(this.CW * 0.36);
       const colRefW = avecPhotos ? Math.round(remW * 0.22) : Math.round(this.CW * 0.22);
-      const colMachW = avecPhotos ? Math.round(remW * 0.30) : Math.round(this.CW * 0.28);
+      const colMachW = avecPhotos ? Math.round(remW * 0.31) : Math.round(this.CW * 0.28);
       const colQteW = remW - (colDenomW + colRefW + colMachW);
-      const hLigne = avecPhotos ? 46 : 22;
+      const hLigne = avecPhotos ? TAILLE_PHOTO + 8 : 22;
       const hEntete = 20;
 
       this.saut(hEntete + hLigne * Math.min(pcs.length, 3) + 24);
@@ -6577,10 +6583,14 @@ ul.liste li { margin-bottom: 6px; }
         if (avecPhotos) {
           if (item.photo) {
             try {
-              const jp = await toJpeg(item.photo, 400, 0.85);
-              if (jp && jp.bytes) {
+              /* toJpeg() renvoie { dataUrl, w, h } : les octets de l'image sont à
+                 extraire du dataUrl (avant, le code lisait un « jp.bytes » qui n'existe
+                 pas : la photo n'était jamais dessinée et la case affichait « — »). */
+              const jp = await toJpeg(item.photo, 500, 0.85);
+              const octets = (jp && jp.dataUrl) ? Pdf.dataUrlToBytes(jp.dataUrl) : null;
+              if (octets) {
                 const rImg = (jp.w && jp.h) ? (jp.w / jp.h) : 1;
-                const maxBox = 38;
+                const maxBox = TAILLE_PHOTO;
                 let imgW = maxBox, imgH = maxBox;
                 if (rImg >= 1) {
                   imgH = maxBox / rImg;
@@ -6589,7 +6599,7 @@ ul.liste li { margin-bottom: 6px; }
                 }
                 const imgX = rowX + (colPhotoW - imgW) / 2;
                 const imgY = y + (hLigne - imgH) / 2;
-                p.image(jp.bytes, imgX, imgY, imgW, imgH);
+                p.image(octets, imgX, imgY, imgW, imgH);
               } else {
                 p.text('—', rowX + colPhotoW / 2, y + hLigne / 2 + 3.5, { size: 9.4, color: C.gris, align: 'center' });
               }
@@ -6609,7 +6619,14 @@ ul.liste li { margin-bottom: 6px; }
         const machInfo = infoMachinePiece(item, this.i);
         const textY = avecPhotos ? (y + hLigne / 2 + 3.5) : (y + 14.5);
 
-        p.text(Pdf.trunc(denom, colDenomW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: C.texte });
+        if (avecPhotos) {
+          // ligne haute : la dénomination peut tenir sur 3 lignes, centrées verticalement
+          const lignesDenom = Pdf.wrap(denom, colDenomW - 14, 9.4).slice(0, 3);
+          const y0 = y + hLigne / 2 + 3.5 - (lignesDenom.length - 1) * 6;
+          lignesDenom.forEach((l, k) => p.text(Pdf.trunc(l, colDenomW - 14, 9.4, false), rowX + 7, y0 + k * 12, { size: 9.4, color: C.texte }));
+        } else {
+          p.text(Pdf.trunc(denom, colDenomW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: C.texte });
+        }
         p.line(rowX + colDenomW, y, rowX + colDenomW, y + hLigne, { color: C.bord, width: 0.4 });
         rowX += colDenomW;
 
@@ -6619,9 +6636,10 @@ ul.liste li { margin-bottom: 6px; }
 
         if (avecPhotos) {
           if (machInfo.serie) {
-            p.text(Pdf.trunc('N° ' + machInfo.serie, colMachW - 14, 9.4, false), rowX + 7, y + 18, { size: 9.4, font: 'F2', color: C.bleu });
+            const yS = machInfo.designation ? y + hLigne / 2 - 2.5 : textY;
+            p.text(Pdf.trunc('N° ' + machInfo.serie, colMachW - 14, 9.4, false), rowX + 7, yS, { size: 9.4, font: 'F2', color: C.bleu });
             if (machInfo.designation) {
-              p.text(Pdf.trunc(machInfo.designation, colMachW - 14, 8.5, false), rowX + 7, y + 31, { size: 8.5, color: C.texte });
+              p.text(Pdf.trunc(machInfo.designation, colMachW - 14, 8.5, false), rowX + 7, yS + 13, { size: 8.5, color: C.texte });
             }
           } else {
             p.text(Pdf.trunc(machInfo.designation || '—', colMachW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: machInfo.designation ? C.texte : C.gris });
@@ -7362,7 +7380,7 @@ ul.liste li { margin-bottom: 6px; }
             const machInfo = infoMachinePiece(p, i);
             if (avecPhotos) {
               return [
-                p.photo ? { image: p.photo, imageCm: 1.5, align: 'center' } : { texte: '—', align: 'center' },
+                p.photo ? { image: p.photo, imageCm: Math.min(2.6, 2.6 / ratioPhoto(p.photo)), align: 'center' } : { texte: '—', align: 'center' },
                 { texte: p.denomination || p.designation || '—' },
                 { texte: p.reference || '—' },
                 { texte: machInfo.libelle || '—' },
@@ -7376,7 +7394,7 @@ ul.liste li { margin-bottom: 6px; }
               { texte: String(p.quantite || 1), align: 'center' }
             ];
           });
-          d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [14, 32, 22, 22, 10] : [36, 24, 28, 12] });
+          d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [18, 30, 20, 22, 10] : [36, 24, 28, 12] });
           d.para(this.L('La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.'), { taille: 9.5, couleur: '64748B', apres: 120 });
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'photos') {
@@ -7409,7 +7427,7 @@ ul.liste li { margin-bottom: 6px; }
                 const machInfo = infoMachinePiece(p, i);
                 if (avecPhotos) {
                   return [
-                    p.photo ? { image: p.photo, imageCm: 1.5, align: 'center' } : { texte: '—', align: 'center' },
+                    p.photo ? { image: p.photo, imageCm: Math.min(2.6, 2.6 / ratioPhoto(p.photo)), align: 'center' } : { texte: '—', align: 'center' },
                     { texte: p.denomination || p.designation || '—' },
                     { texte: p.reference || '—' },
                     { texte: machInfo.libelle || '—' },
@@ -7423,7 +7441,7 @@ ul.liste li { margin-bottom: 6px; }
                   { texte: String(p.quantite || 1), align: 'center' }
                 ];
               });
-              d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [14, 32, 22, 22, 10] : [36, 24, 28, 12] });
+              d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [18, 30, 20, 22, 10] : [36, 24, 28, 12] });
               d.para(this.L('La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.'), { taille: 9.5, couleur: '64748B', apres: 120 });
               piecesRendues = true;
               dernierTypeEtaitEvenement = false;
@@ -10434,6 +10452,9 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           <button class="btn ghost" data-a="apercu">${(ICO.eye && ICO.eye(18)) || ''} Aperçu PDF</button>
           <button class="btn grey" data-a="word">${(ICO.fileText && ICO.fileText(18)) || ''} Word</button>
         </div>
+        ${(() => { const n = photosIntervention(R).filter(ph => ph.dataUrl).length; return n
+          ? `<button class="btn ghost wide" style="margin-top:8px" data-a="photos-zip">${(ICO.image && ICO.image(18)) || ''} Toutes les photos (${n}) — dossier .zip</button>`
+          : ''; })()}
         <p class="small" style="margin-top:8px">Destinataires : client <strong>${esc(R.client.email || 'non renseigné')}</strong> — SAV <strong>${esc(S.mail.destinataireSAV || 'non renseigné')}</strong>${S.mail.assistantSAV ? ` — Assistant SAV (CC) <strong>${esc(S.mail.assistantSAV)}</strong>` : ''}</p>
       </div>`;
   }
@@ -12175,6 +12196,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       ${t ? `<button class="menu-item" data-a="dlt"><span class="ico">${(ICO.download && ICO.download(18)) || ''}</span><span>Télécharger le PDF (${esc(nomLangue)})</span></button>` : ''}
       <button class="menu-item" data-a="dlw"><span class="ico">${(ICO.fileText && ICO.fileText(18)) || ''}</span><span>Télécharger la version Word (Français)</span></button>
       ${(t && t.word) ? `<button class="menu-item" data-a="dlwt"><span class="ico">${(ICO.fileText && ICO.fileText(18)) || ''}</span><span>Télécharger la version Word (${esc(nomLangue)})</span></button>` : ''}
+      ${photosIntervention(R).some(ph => ph.dataUrl) ? `<button class="menu-item" data-a="photos-zip"><span class="ico">${(ICO.image && ICO.image(18)) || ''}</span><span>Télécharger toutes les photos (dossier .zip)</span></button>` : ''}
       <button class="menu-item" data-a="copier"><span class="ico">${(ICO.copy && ICO.copy(18)) || ''}</span><span>Copier le texte du message</span></button>
       <button class="btn grey wide" style="margin-top:10px" data-a="fermer">Fermer</button></div>`;
 
@@ -12241,6 +12263,8 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           telecharger(res.blob, res.filename);
         } else if (a === 'dlt') {
           if (t && t.pdf) telecharger(t.pdf.blob, t.pdf.filename);
+        } else if (a === 'photos-zip') {
+          dossierPhotos();
         } else if (a === 'dlw') {
           if (resWord) telecharger(resWord.blob, resWord.filename);
         } else if (a === 'dlwt') {
@@ -12346,6 +12370,104 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
     });
     setTimeout(() => { const p = $('#technicien\.prenom', panneau) || panneau.querySelector('[data-sk="technicien.prenom"]'); if (p && !p.value) p.focus(); }, 80);
     return panneau;
+  }
+
+  /* ===================== Dossier photos (.zip) ======================== */
+  /* Toutes les photos de l'intervention, dans l'ordre du rapport :
+     évènements, pièces de rechange, photos complémentaires. */
+  function photosIntervention(r) {
+    r = r || R;
+    const out = [];
+    const etat = { dom: {}, cat: {} };
+    (S.domaines || []).forEach(d => { etat.dom[d.id] = d.libelle; });
+    (S.categories || []).forEach(c => { etat.cat[c.id] = c.libelle; });
+    (r.evenements || []).forEach((ev, k) => {
+      (ev.photos || []).forEach((ph, j) => {
+        if (!ph) return;
+        out.push({ type: 'evenement', dataUrl: ph.dataUrl || '', numEv: k + 1, numPhoto: j + 1,
+          heure: ev.heure, domaine: etat.dom[ev.domaine] || ev.domaine || '', categorie: etat.cat[ev.categorie] || ev.categorie || '',
+          machine: ev.machineNom || '', texte: ev.texte || '', legende: ph.legende || '' });
+      });
+    });
+    (r.pieces || []).forEach((pc, k) => {
+      if (!pc || !pc.photo) return;
+      const m = (typeof Report !== 'undefined' && Report.infoMachinePiece) ? Report.infoMachinePiece(pc, r) : { libelle: '' };
+      out.push({ type: 'piece', dataUrl: pc.photo, numPiece: k + 1, texte: pc.denomination || pc.designation || '',
+        reference: pc.reference || '', quantite: pc.quantite || 1, machine: (m && m.libelle && m.libelle !== '—') ? m.libelle : '' });
+    });
+    (r.photosLibres || []).forEach((ph, k) => {
+      if (!ph) return;
+      out.push({ type: 'libre', dataUrl: ph.dataUrl || '', numPhoto: k + 1, legende: ph.legende || '' });
+    });
+    return out;
+  }
+
+  /* Nom de fichier lisible partout (Windows, Mac, téléphone) : sans accents ni signes. */
+  function nomFichierSur(texte, max) {
+    const s = String(texte || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return s.slice(0, max || 40).replace(/-+$/, '');
+  }
+
+  async function dossierPhotos() {
+    sauver(true);
+    if (typeof RapportDB !== 'undefined') { try { await RapportDB.restaurerPhotos(R); } catch (_) {} }
+    const photos = photosIntervention(R);
+    const dispo = photos.filter(ph => ph.dataUrl);
+    if (!dispo.length) { toast('Aucune photo dans cette intervention'); return false; }
+    if (typeof Docx === 'undefined' || !Docx.zip) { toast('Création du dossier impossible sur ce navigateur'); return false; }
+    afficherChargement('Préparation du dossier photos…', dispo.length + ' photo(s)');
+    try {
+      const fichiers = [];
+      const dejaPris = new Set();
+      const unique = (chemin) => {
+        let c = chemin, k = 2;
+        const point = chemin.lastIndexOf('.');
+        while (dejaPris.has(c.toLowerCase())) { c = chemin.slice(0, point) + '-' + (k++) + chemin.slice(point); }
+        dejaPris.add(c.toLowerCase());
+        return c;
+      };
+      const pad = (n) => ('0' + n).slice(-2);
+      const lignes = [['Fichier', 'Type', 'N°', 'Heure', 'Domaine', 'Catégorie', 'Machine', 'Description', 'Référence', 'Quantité', 'Légende']];
+      for (const ph of photos) {
+        let chemin = '', type = '', num = '';
+        const ext = /^data:image\/png/i.test(ph.dataUrl) ? '.png' : '.jpg';
+        if (ph.type === 'evenement') {
+          type = 'Évènement'; num = ph.numEv + (ph.numPhoto > 1 ? '.' + ph.numPhoto : '');
+          chemin = '1-Evenements/E' + pad(ph.numEv) + '-' + ph.numPhoto + '_' + nomFichierSur(ph.categorie, 20) +
+            (ph.texte ? '_' + nomFichierSur(ph.texte, 40) : '') + ext;
+        } else if (ph.type === 'piece') {
+          type = 'Pièce de rechange'; num = ph.numPiece;
+          chemin = '2-Pieces/P' + pad(ph.numPiece) + '_' + nomFichierSur(ph.texte, 40) +
+            (ph.reference ? '_' + nomFichierSur(ph.reference, 30) : '') + ext;
+        } else {
+          type = 'Photo complémentaire'; num = ph.numPhoto;
+          chemin = '3-Photos-complementaires/PC' + pad(ph.numPhoto) + (ph.legende ? '_' + nomFichierSur(ph.legende, 40) : '') + ext;
+        }
+        chemin = unique(chemin);
+        if (ph.dataUrl) fichiers.push({ nom: chemin, donnees: Docx.dataUrlToBytes(ph.dataUrl) });
+        lignes.push([ph.dataUrl ? chemin : '(photo introuvable sur ce téléphone)', type, num,
+          ph.heure ? Report.heureFr(ph.heure) : '', ph.domaine || '', ph.categorie || '', ph.machine || '',
+          ph.texte || '', ph.reference || '', ph.quantite || '', ph.legende || '']);
+      }
+      /* Index ouvrable dans Excel : point-virgule et BOM UTF-8 pour les accents. */
+      const csv = '\ufeff' + lignes.map(l => l.map(v => {
+        const s = String(v == null ? '' : v).replace(/\r?\n/g, ' ');
+        return /[;"]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(';')).join('\r\n');
+      fichiers.unshift({ nom: 'Liste-des-photos.csv', donnees: Docx.utf8(csv) });
+      const octets = Docx.zip(fichiers);
+      const nom = 'Photos_' + nomFichierSur(R.numero, 30) + '_' + nomFichierSur(R.client && R.client.nom, 30) + '_' + (R.date || todayISO()) + '.zip';
+      masquerChargement();
+      const ok = await telecharger(new Blob([octets], { type: 'application/zip' }), nom);
+      if (ok) toast('Dossier photos enregistré : ' + dispo.length + ' photo(s)', 3200);
+      return ok;
+    } catch (err) {
+      masquerChargement();
+      console.error('Dossier photos :', err);
+      toast('Création du dossier photos impossible', 4000);
+      return false;
+    }
   }
 
   /* Sauvegarde complète (tous les rapports avec leurs photos + réglages) en JSON.
@@ -13573,6 +13695,7 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       else if (a === 'soumettre') soumettre();
       else if (a === 'apercu') apercuPDF();
       else if (a === 'word') docx().then(res => { telecharger(res.blob, res.filename); toast('Version Word enregistrée'); });
+      else if (a === 'photos-zip') dossierPhotos();
       else if (a === 'menu') feuilleMenu();
       else if (a === 'identite') feuilleIdentite();
       else if (a === 'photos-libres') feuillePhotosLibres();
@@ -14270,5 +14393,5 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
   };
 })();
 </script>
-<script>window.SAV_VERSION="393d244e83";window.SAV_DATE="07/10/2026";</script></body>
+<script>window.SAV_VERSION="994d934308";window.SAV_DATE="14/10/2026";</script></body>
 </html>

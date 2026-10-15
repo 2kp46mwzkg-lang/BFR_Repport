@@ -1522,11 +1522,13 @@ ul.liste li { margin-bottom: 6px; }
 /* =========================================================================
    DIVERS & NOTIFICATIONS (TOAST)
    ========================================================================= */
+/* Messages en HAUT de l'écran, sous la barre de titre : ils ne masquent plus
+   le champ en cours de saisie (le clavier du téléphone occupe le bas). */
 #toast {
   position: fixed;
   left: 50%;
-  bottom: calc(104px + env(safe-area-inset-bottom));
-  transform: translateX(-50%) translateY(20px);
+  top: calc(70px + env(safe-area-inset-top));
+  transform: translateX(-50%) translateY(-16px);
   background: var(--bfr-secondary-dark);
   color: #fff;
   border: 1px solid var(--bfr-primary);
@@ -2152,3 +2154,42 @@ ul.liste li { margin-bottom: 6px; }
 }
 
 
+
+/* =========================================================================
+   BOÎTES DE DIALOGUE INTÉGRÉES (remplacent confirm / alert / prompt du
+   navigateur, qui sont bloqués dans certains cadres, ex. artefact Claude)
+   ========================================================================= */
+.dlg-fond {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.dlg {
+  background: var(--bfr-card-bg);
+  color: var(--bfr-text);
+  border-radius: 12px;
+  border: 1px solid var(--bfr-border);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+  width: 100%;
+  max-width: 420px;
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dlg-msg { margin: 0; white-space: pre-line; line-height: 1.45; }
+.dlg-input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--bfr-border);
+  border-radius: 8px;
+}
+.dlg-btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.dlg-btns .btn { min-width: 110px; }

@@ -1,3 +1,18 @@
+# Correction et nouveautés du 14/10/2026
+
+- **Dossier photos (.zip)** : bouton « Toutes les photos — dossier .zip » sous Soumettre le
+  rapport (et dans l'écran d'envoi). Le zip contient `1-Evenements/`, `2-Pieces/`,
+  `3-Photos-complementaires/`, des noms de fichiers parlants (n°, catégorie ou dénomination,
+  référence) et `Liste-des-photos.csv` (ouvrable dans Excel : heure, domaine, catégorie,
+  machine, texte, référence, quantité, légende).
+- **Photos des pièces en grand** dans le tableau du PDF (2,5 cm au lieu de 1,3 cm, dénomination
+  sur plusieurs lignes) et du Word (2,6 cm).
+
+- PDF : les photos des pièces de rechange n'apparaissaient jamais dans le tableau des
+  pièces (la case affichait « — »). Le code lisait un champ d'image inexistant
+  (`jp.bytes`) au lieu de convertir l'image obtenue (`jp.dataUrl`). Défaut présent
+  depuis la première version ; un test vérifie désormais la photo dans le PDF et le Word.
+
 # Améliorations du 07/10/2026
 
 ## Rapport PDF et Word

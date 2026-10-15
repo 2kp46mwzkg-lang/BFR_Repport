@@ -46,6 +46,58 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2600);
   }
+  /* Boîtes de dialogue intégrées à la page. confirm(), alert() et prompt() du
+     navigateur sont bloqués dans certains cadres (artefact Claude : confirm()
+     y répond toujours « non ») ; elles sont donc remplacées partout par ces
+     versions asynchrones : confirmer() -> Promise<bool>, saisir() -> Promise<texte|null>,
+     informer() -> Promise. */
+  const Dialogue = (function () {
+    function ouvrir(message, o) {
+      return new Promise(function (resolve) {
+        const fond = document.createElement('div');
+        fond.className = 'dlg-fond';
+        fond.innerHTML = '<div class="dlg" role="dialog" aria-modal="true"><p class="dlg-msg"></p>' +
+          (o.saisie ? '<input type="text" class="dlg-input" id="dlgSaisie" autocomplete="off">' : '') +
+          '<div class="dlg-btns">' +
+          (o.annuler ? '<button type="button" class="btn grey" data-r="non"></button>' : '') +
+          '<button type="button" class="btn' + (o.danger ? ' danger' : '') + '" data-r="oui"></button></div></div>';
+        fond.querySelector('.dlg-msg').textContent = message;
+        fond.querySelector('[data-r="oui"]').textContent = o.ok;
+        if (o.annuler) fond.querySelector('[data-r="non"]').textContent = o.annuler;
+        const champ = fond.querySelector('#dlgSaisie');
+        function fin(oui) {
+          document.removeEventListener('keydown', clavier, true);
+          fond.remove();
+          resolve(o.saisie ? (oui ? champ.value : null) : oui);
+        }
+        function clavier(e) {
+          if (e.key === 'Escape') { e.preventDefault(); fin(false); }
+          else if (e.key === 'Enter' && champ) { e.preventDefault(); fin(true); }
+        }
+        fond.addEventListener('click', function (e) {
+          const b = e.target.closest('[data-r]');
+          if (b) fin(b.dataset.r === 'oui');
+          else if (e.target === fond && o.annuler) fin(false);
+        });
+        document.addEventListener('keydown', clavier, true);
+        document.body.appendChild(fond);
+        setTimeout(function () { (champ || fond.querySelector('[data-r="oui"]')).focus(); }, 30);
+      });
+    }
+    return {
+      confirmer: function (message, opts) {
+        opts = opts || {};
+        return ouvrir(message, { ok: opts.ok || 'Confirmer', annuler: opts.annuler || 'Annuler', danger: !!opts.danger });
+      },
+      saisir: function (message, opts) {
+        opts = opts || {};
+        return ouvrir(message, { ok: opts.ok || 'Valider', annuler: 'Annuler', saisie: true });
+      },
+      informer: function (message) { return ouvrir(message, { ok: 'OK' }); }
+    };
+  })();
+  if (typeof window !== 'undefined') window.Dialogue = Dialogue;
+
   function vibrate(ms) { if (navigator.vibrate) try { navigator.vibrate(ms || 12); } catch (e) {} }
   const pad2 = (n) => ('0' + n).slice(-2);
   const ICO = (typeof window !== 'undefined' && window.ICO) || (typeof global !== 'undefined' && global.ICO) || {};
@@ -147,26 +199,24 @@
       });
     }
 
+    /* Enregistre toutes les images du rapport dans la base photos et renvoie
+       l'ensemble des identifiants réellement enregistrés. */
     async function sauverPhotosDeRapport(rapport) {
-      if (!rapport) return;
+      if (!rapport) return new Set();
+      const taches = [];
+      const garder = (id, dataUrl, ctx) => taches.push(sauverPhoto(id, dataUrl, ctx, rapport.id).then(ok => ok ? id : null, () => null));
       (rapport.evenements || []).forEach(function (ev) {
         (ev.photos || []).forEach(function (ph, idx) {
           if (ph && !ph.id) ph.id = 'p_' + (rapport.id || 'r') + '_' + (ev.id || 'e') + '_' + idx;
-          if (ph && ph.id && ph.dataUrl) {
-            sauverPhoto(ph.id, ph.dataUrl, 'evenement', rapport.id);
-          }
+          if (ph && ph.id && ph.dataUrl) garder(ph.id, ph.dataUrl, 'evenement');
         });
       });
       (rapport.photosLibres || []).forEach(function (ph, idx) {
         if (ph && !ph.id) ph.id = 'phl_' + (rapport.id || 'r') + '_' + idx;
-        if (ph && ph.id && ph.dataUrl) {
-          sauverPhoto(ph.id, ph.dataUrl, 'photosLibres', rapport.id);
-        }
+        if (ph && ph.id && ph.dataUrl) garder(ph.id, ph.dataUrl, 'photosLibres');
       });
       (rapport.pieces || []).forEach(function (pc) {
-        if (pc && pc.id && pc.photo) {
-          sauverPhoto('pc_' + pc.id, pc.photo, 'piece', rapport.id);
-        }
+        if (pc && pc.id && pc.photo) garder('pc_' + pc.id, pc.photo, 'piece');
       });
       if (rapport.signatureClient && rapport.signatureClient.dataUrl) {
         sauverPhoto('sig_client_' + rapport.id, rapport.signatureClient.dataUrl, 'signatureClient', rapport.id);
@@ -174,6 +224,19 @@
       if (rapport.signatureTech && rapport.signatureTech.dataUrl) {
         sauverPhoto('sig_tech_' + rapport.id, rapport.signatureTech.dataUrl, 'signatureTech', rapport.id);
       }
+      const ids = await Promise.all(taches);
+      return new Set(ids.filter(Boolean));
+    }
+
+    /* Copie du rapport sans les images déjà en sécurité dans la base photos :
+       l'enregistrement du rapport reste léger (liste rapide, moins de mémoire). */
+    function alleger(r, enregistrees) {
+      const sans = (ph) => (ph && ph.id && ph.dataUrl && enregistrees.has(ph.id)) ? Object.assign({}, ph, { dataUrl: '' }) : ph;
+      const o = Object.assign({}, r);
+      o.evenements = (r.evenements || []).map(ev => Object.assign({}, ev, { photos: (ev.photos || []).map(sans) }));
+      o.photosLibres = (r.photosLibres || []).map(sans);
+      o.pieces = (r.pieces || []).map(pc => (pc && pc.id && pc.photo && enregistrees.has('pc_' + pc.id)) ? Object.assign({}, pc, { photo: '' }) : pc);
+      return o;
     }
 
     /* Liste « à plat » des emplacements d'images d'un rapport : [{ id, lire(), ecrire(v) }].
@@ -217,9 +280,8 @@
       attribuerIds(rapport);
       const copie = JSON.parse(JSON.stringify(rapport));
       memRapports.set(rapport.id, copie);
-      await sauverPhotosDeRapport(rapport);
       const db = await ouvrirDB();
-      if (!db) return true;
+      if (!db) { await sauverPhotosDeRapport(copie); return true; }
       // Garde-fou : une image absente de la copie (version « allégée » du localStorage,
       // sauvegarde incomplète…) est reprise de la base photos ou de l'enregistrement
       // existant, au lieu d'écraser l'image déjà conservée.
@@ -234,10 +296,12 @@
           if (v) e.ecrire(v);
         }
       }
+      const enregistrees = await sauverPhotosDeRapport(copie);
+      const leger = alleger(copie, enregistrees);
       return new Promise(function (resolve) {
         try {
           const tx = db.transaction([STORE_RAPPORTS], 'readwrite');
-          tx.objectStore(STORE_RAPPORTS).put(copie);
+          tx.objectStore(STORE_RAPPORTS).put(leger);
           tx.oncomplete = function () { resolve(true); };
           tx.onerror = function () { resolve(false); };
         } catch (e) { resolve(false); }
@@ -310,18 +374,88 @@
       return liste;
     }
 
+    /* Supprime le rapport ET ses photos (sinon la base photos grossit indéfiniment). */
     async function supprimerRapport(id) {
       if (!id) return false;
       memRapports.delete(id);
+      memPhotos.forEach(function (v, k) { if (v && v.rapportId === id) memPhotos.delete(k); });
       const db = await ouvrirDB();
       if (!db) return true;
       return new Promise(function (resolve) {
         try {
-          const tx = db.transaction([STORE_RAPPORTS], 'readwrite');
+          const tx = db.transaction([STORE_RAPPORTS, STORE_PHOTOS], 'readwrite');
           tx.objectStore(STORE_RAPPORTS).delete(id);
+          const cur = tx.objectStore(STORE_PHOTOS).openCursor();
+          cur.onsuccess = function () {
+            const c = cur.result;
+            if (!c) return;
+            if (c.value && c.value.rapportId === id) c.delete();
+            c.continue();
+          };
           tx.oncomplete = function () { resolve(true); };
           tx.onerror = function () { resolve(false); };
         } catch (e) { resolve(false); }
+      });
+    }
+
+    /* Identifiants des rapports présents en base (sans rien charger d'autre). */
+    async function idsRapports() {
+      const db = await ouvrirDB();
+      if (!db) return new Set(memRapports.keys());
+      return new Promise(function (resolve) {
+        try {
+          const rq = db.transaction([STORE_RAPPORTS], 'readonly').objectStore(STORE_RAPPORTS).getAllKeys();
+          rq.onsuccess = function () { resolve(new Set(rq.result || [])); };
+          rq.onerror = function () { resolve(new Set()); };
+        } catch (e) { resolve(new Set()); }
+      });
+    }
+
+    /* Résumé d'un rapport pour la liste « Rapports enregistrés » (aucune image). */
+    function resume(r, clesPhotos) {
+      let nbPhotos = 0, perdues = 0;
+      const voir = function (ph) {
+        if (!ph) return;
+        nbPhotos++;
+        if (!ph.dataUrl && !(ph.id && clesPhotos && clesPhotos.has(ph.id))) perdues++;
+      };
+      (r.evenements || []).forEach(function (ev) { (ev.photos || []).forEach(voir); });
+      (r.photosLibres || []).forEach(voir);
+      (r.pieces || []).forEach(function (pc) { if (pc && (pc.photo || (clesPhotos && clesPhotos.has('pc_' + pc.id)))) nbPhotos++; });
+      return {
+        id: r.id, numero: r.numero || '', statut: r.statut || 'brouillon', date: r.date || '',
+        cree: r.cree || '', maj: r.maj || '',
+        client: { nom: (r.client && r.client.nom) || '' },
+        machine: { designation: (r.machine && r.machine.designation) || '' },
+        nbEvenements: (r.evenements || []).length, nbPhotos: nbPhotos, perdues: perdues,
+        vierge: !(r.evenements || []).length && !(r.client && r.client.nom) && !(r.chrono && r.chrono.debut)
+      };
+    }
+
+    /* Liste légère : parcourt les rapports un par un et n'en garde que le résumé.
+       Avant, la liste chargeait toutes les photos de tous les rapports. */
+    async function resumes() {
+      const db = await ouvrirDB();
+      if (!db) return null;
+      const clesPhotos = await new Promise(function (resolve) {
+        try {
+          const rq = db.transaction([STORE_PHOTOS], 'readonly').objectStore(STORE_PHOTOS).getAllKeys();
+          rq.onsuccess = function () { resolve(new Set(rq.result || [])); };
+          rq.onerror = function () { resolve(new Set()); };
+        } catch (e) { resolve(new Set()); }
+      });
+      return new Promise(function (resolve) {
+        const out = [];
+        try {
+          const cur = db.transaction([STORE_RAPPORTS], 'readonly').objectStore(STORE_RAPPORTS).openCursor();
+          cur.onsuccess = function () {
+            const c = cur.result;
+            if (!c) { resolve(out); return; }
+            if (c.value && c.value.id) out.push(resume(c.value, clesPhotos));
+            c.continue();
+          };
+          cur.onerror = function () { resolve(out); };
+        } catch (e) { resolve(out); }
       });
     }
 
@@ -383,7 +517,10 @@
       getPhoto,
       sauverPhotosDeRapport,
       restaurerPhotos,
-      imagesManquantes
+      imagesManquantes,
+      idsRapports,
+      resume,
+      resumes
     };
   })();
 
@@ -415,13 +552,18 @@
     },
     technicien: { prenom: '', nom: '', fonction: 'Technicien SAV', tel: '', email: '', signature: '' },
     mail: {
-      destinataireSAV: 's.peyaud@bfrsystems.com', assistantSAV: '', destinatairesCopie: '',
+      /* Aucune adresse dans le code (dépôt public) : elle arrive par le fichier
+         « réglages d'équipe » importé une fois sur chaque téléphone, ou se saisit dans Réglages. */
+      destinataireSAV: '', assistantSAV: '', destinatairesCopie: '',
       objet: 'Rapport d\'intervention N° {{numero}} — {{client}} — {{date}}',
       corps: '', envoyerClient: true, envoyerSAV: true,
       messagePartage: 'Bonjour, veuillez trouver ci-joint le rapport d\'intervention N° {{numero}} du {{date}}. Cordialement.'
     },
     impression: {
-      mentionClient: "Le client reconnaît avoir pris connaissance du présent rapport, avoir reçu les explications du technicien et accepte les constats et travaux décrits."
+      mentionClient: "Le client reconnaît avoir pris connaissance du présent rapport, avoir reçu les explications du technicien et accepte les constats et travaux décrits.",
+      /* 'compacte' : évènements à la suite, mise en page selon le nombre de photos ;
+         'unParPage' : une page par évènement (ancienne mise en page). */
+      miseEnPageEvenements: 'compacte'
     },
     domaines: DOMAINES_DEFAUT,
     categories: CATEGORIES_DEFAUT,
@@ -456,7 +598,6 @@
   }
   if (!S.migrations.mailSAVv2) {
     // ancienne adresse générique remplacée par celle du responsable SAV
-    if (S.mail && S.mail.destinataireSAV === 'sav@bfrsystems.com') S.mail.destinataireSAV = 's.peyaud@bfrsystems.com';
     S.migrations.mailSAVv2 = true;
     Store.set(K.settings, S);
   }
@@ -545,13 +686,33 @@
   appliquerIconeApp(S.iconeApp || 'opt1');
 
   /* ===================== Intervention ================================= */
-  function numeroSuggere() {
+  /* Code du technicien dans le n° de rapport : celui saisi dans « Mes informations »,
+     sinon ses initiales (Romuald TEST -> RT). Deux techniciens ne produisent ainsi
+     jamais le même numéro le même jour. */
+  function codeTechnicien() {
+    const t = (S && S.technicien) || {};
+    const saisi = String(t.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+    if (saisi) return saisi;
+    const initiale = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z]/g, '').charAt(0).toUpperCase();
+    return initiale(t.prenom) + initiale(t.nom);
+  }
+  function debutNumero() {
     const d = new Date();
     const base = d.getFullYear().toString().slice(2) + pad2(d.getMonth() + 1) + pad2(d.getDate());
-    let seq = 1;
-    const jour = todayISO();
-    Store.get(K.rapports, []).forEach(r => { if (r.cree && r.cree.slice(0, 10) === jour) seq++; });
-    return (S.numeroPrefixe ? S.numeroPrefixe.replace(/[-\s]+$/, '') + '-' : '') + base + '-' + pad2(seq);
+    const code = codeTechnicien();
+    return (S.numeroPrefixe ? S.numeroPrefixe.replace(/[-\s]+$/, '') + '-' : '') + (code ? code + '-' : '') + base + '-';
+  }
+  function numeroSuggere(exclureId) {
+    const debut = debutNumero();
+    /* Numéro suivant = plus grand numéro déjà utilisé aujourd'hui avec ce début, + 1. */
+    let max = 0;
+    Store.get(K.rapports, []).forEach(r => {
+      if (!r || (exclureId && r.id === exclureId)) return;
+      const n = String((r && r.numero) || '');
+      if (n.indexOf(debut) === 0) { const k = parseInt(n.slice(debut.length), 10); if (k > max) max = k; }
+    });
+    return debut + pad2(max + 1);
   }
 
   function nouvelleIntervention() {
@@ -588,7 +749,11 @@
     };
   }
 
-  let R = fusion(nouvelleIntervention(), Store.get(K.rapport, null) || {});
+  const rapportStocke = Store.get(K.rapport, null) || {};
+  let R = fusion(nouvelleIntervention(), rapportStocke);
+  /* numeroAuto : numéro généré par l'appli, recalculé si le code technicien change
+     (jamais pour un rapport existant ou dont le numéro a été saisi à la main). */
+  if (!rapportStocke.id) R.numeroAuto = true;
   if (!R.evenements) R.evenements = [];
   if (!Array.isArray(R.pieces)) R.pieces = [];
   if (!R.trajet || typeof R.trajet !== 'object') {
@@ -661,13 +826,9 @@
           if (!rapportVierge(R)) await RapportDB.sauverRapport(R);
         }
         const liste = Store.get(K.rapports, []);
+        const presents = await RapportDB.idsRapports();
         for (const rep of liste) {
-          if (rep && rep.id) {
-            const dbRep = await RapportDB.getRapport(rep.id);
-            if (!dbRep) {
-              await RapportDB.sauverRapport(rep);
-            }
-          }
+          if (rep && rep.id && !presents.has(rep.id)) await RapportDB.sauverRapport(rep);
         }
       } catch (e) {
         console.warn('Initialisation stockage:', e);
@@ -1033,6 +1194,9 @@
           <button class="btn ghost" data-a="apercu">${(ICO.eye && ICO.eye(18)) || ''} Aperçu PDF</button>
           <button class="btn grey" data-a="word">${(ICO.fileText && ICO.fileText(18)) || ''} Word</button>
         </div>
+        ${(() => { const n = photosIntervention(R).filter(ph => ph.dataUrl).length; return n
+          ? `<button class="btn ghost wide" style="margin-top:8px" data-a="photos-zip">${(ICO.image && ICO.image(18)) || ''} Toutes les photos (${n}) — dossier .zip</button>`
+          : ''; })()}
         <p class="small" style="margin-top:8px">Destinataires : client <strong>${esc(R.client.email || 'non renseigné')}</strong> — SAV <strong>${esc(S.mail.destinataireSAV || 'non renseigné')}</strong>${S.mail.assistantSAV ? ` — Assistant SAV (CC) <strong>${esc(S.mail.assistantSAV)}</strong>` : ''}</p>
       </div>`;
   }
@@ -1726,7 +1890,11 @@
         <button class="btn" data-a="ok">Valider</button></div>
     </div>`, (panneau) => {
       $$('[data-fk]', panneau).forEach(el => {
-        el.addEventListener('input', () => { setPath(R, el.dataset.fk, el.value); planifier(); rendreEntete(); rendreTout(); });
+        el.addEventListener('input', () => {
+          setPath(R, el.dataset.fk, el.value);
+          if (el.dataset.fk === 'numero') R.numeroAuto = false;   // numéro choisi à la main : on n'y touche plus
+          planifier(); rendreEntete(); rendreTout();
+        });
       });
 
       function rafraichirMachinesSub() {
@@ -2289,7 +2457,8 @@
   const Cache = { pdf: null, docx: null, clePdf: '', cleDocx: '', cleTrad: '' };
   function cleCache(rapport, langue) {
     rapport = rapport || R;
-    return JSON.stringify([rapport.id, rapport.maj, (S.canevas && S.canevas.nom) || '', langue || 'fr']);
+    return JSON.stringify([rapport.id, rapport.maj, (S.canevas && S.canevas.nom) || '', langue || 'fr',
+      (S.impression && S.impression.miseEnPageEvenements) || 'compacte']);
   }
   /* Génère le PDF : français par défaut, ou dans la langue demandée
      (suffixe : nom de fichier « …_EN.pdf » quand les deux langues cohabitent). */
@@ -2313,13 +2482,53 @@
   function urlObjet(blob) {
     try { return URL.createObjectURL(blob); } catch (e) { return null; }
   }
+  /* Dans un artefact Claude, la page ne peut pas déclencher de téléchargement elle-même :
+     on passe par la capacité « downloads » (le visiteur confirme l'enregistrement).
+     Ailleurs (GitHub Pages, fichier ouvert dans Chrome) : lien de téléchargement classique. */
+  let capaciteTelechargement;
+  function obtenirCapaciteTelechargement() {
+    if (capaciteTelechargement !== undefined) return capaciteTelechargement;
+    const c = (typeof window !== 'undefined') ? window.claude : null;
+    capaciteTelechargement = (c && typeof c.use === 'function')
+      ? c.use('downloads').catch(() => null)
+      : Promise.resolve(null);
+    return capaciteTelechargement;
+  }
+  // Les enregistrements passent l'un après l'autre (une seule confirmation ouverte à la fois)
+  let fileEnregistrements = Promise.resolve();
   function telecharger(blob, nom) {
+    const resultat = fileEnregistrements.then(() => obtenirCapaciteTelechargement()).then((dl) => {
+      if (!dl) return telechargerLien(blob, nom);
+      return dl.save({ filename: nom, data: blob }).then(() => true, (err) => {
+        const code = err && err.code;
+        if (code === 'declined') toast('Enregistrement de ' + nom + ' annulé');
+        else toast('Enregistrement impossible ici' + (code ? ' (' + code + ')' : ''), 4000);
+        return false;
+      });
+    }).catch(() => false);
+    fileEnregistrements = resultat;
+    return resultat;   // Promise<bool> : true si le fichier a été remis au visiteur
+  }
+  function dansUnCadre() {
+    try { return window.self !== window.top; } catch (_) { return true; }
+  }
+  /* Ouvre la messagerie du téléphone. Dans un cadre (artefact Claude), les liens mailto:
+     ne sont pas fiables : l'adresse est déjà copiée, on le rappelle simplement. */
+  function ouvrirMessagerie(url) {
+    if (dansUnCadre()) {
+      toast('Adresse copiée : collez-la dans votre messagerie et joignez le PDF enregistré', 5000);
+      return;
+    }
+    window.location.href = url;
+  }
+  function telechargerLien(blob, nom) {
     const url = urlObjet(blob);
-    if (!url) { toast('Téléchargement indisponible sur ce navigateur'); return; }
+    if (!url) { toast('Téléchargement indisponible sur ce navigateur'); return false; }
     const a = document.createElement('a');
     a.href = url; a.download = nom;
     document.body.appendChild(a); a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
+    return true;
   }
   /* Aperçu du rapport : on dessine les pages du PDF dans l'application
      (Chrome bloque l'affichage d'un PDF dans un cadre, surtout hors connexion
@@ -2442,8 +2651,9 @@
       ? "Ce téléphone ne peut pas traduire les commentaires automatiquement."
       : "La langue n'a pas pu être préparée (le modèle se télécharge au premier usage : il faut du réseau).";
     masquerChargement();
-    const poursuivre = confirm(explication + "\n\nCréer quand même le rapport en " + nom +
-      " (libellés traduits, commentaires laissés en français) ?\n\n« Annuler » = n'envoyer que le rapport français.");
+    const poursuivre = await Dialogue.confirmer(explication + "\n\nCréer quand même le rapport en " + nom +
+      " (libellés traduits, commentaires laissés en français) ?",
+      { ok: 'Créer en ' + nom, annuler: 'Français seulement' });
     if (!poursuivre) return { actif: true, ok: false, annule: true, motif: res.motif };
     afficherChargement('Mise en page des documents…', 'Création de la version ' + nom + '…');
     return { actif: true, ok: true, rapport: R, code: code, partiel: true, motif: res.motif };
@@ -2614,9 +2824,10 @@
     }
 
     try {
+      if (!Report.nomComplet(S.technicien)) { toast('Indiquez d\'abord votre nom : il figure sur le rapport', 3200); feuilleIdentite(true); return; }
       if (!R.client.nom) { toast('Renseignez d\'abord le client'); feuilleClient(); return; }
-      if (!R.signatureClient.dataUrl && !confirm('Le client n\'a pas signé. Soumettre quand même le rapport ?')) return;
-      if (!R.chrono.fin && R.chrono.debut && !confirm('Le chrono n\'est pas terminé. Continuer ?')) return;
+      if (!R.signatureClient.dataUrl && !(await Dialogue.confirmer('Le client n\'a pas signé. Soumettre quand même le rapport ?', { ok: 'Soumettre' }))) return;
+      if (!R.chrono.fin && R.chrono.debut && !(await Dialogue.confirmer('Le chrono n\'est pas terminé. Continuer ?', { ok: 'Continuer' }))) return;
 
       const avecTrad = !!(R.langue && R.langue.active && R.langue.code);
       const nomLangue = avecTrad && (typeof I18N !== 'undefined') ? I18N.natif(R.langue.code) : '';
@@ -2658,7 +2869,7 @@
     } catch (err) {
       masquerChargement();
       console.error('Erreur lors de la génération du rapport :', err);
-      alert('Erreur lors de la préparation du rapport : ' + (err && err.message ? err.message : err));
+      Dialogue.informer('Erreur lors de la préparation du rapport : ' + (err && err.message ? err.message : err));
     } finally {
       enSoumission = false;
       if (btnSoum) {
@@ -2727,6 +2938,7 @@
       ${t ? `<button class="menu-item" data-a="dlt"><span class="ico">${(ICO.download && ICO.download(18)) || ''}</span><span>Télécharger le PDF (${esc(nomLangue)})</span></button>` : ''}
       <button class="menu-item" data-a="dlw"><span class="ico">${(ICO.fileText && ICO.fileText(18)) || ''}</span><span>Télécharger la version Word (Français)</span></button>
       ${(t && t.word) ? `<button class="menu-item" data-a="dlwt"><span class="ico">${(ICO.fileText && ICO.fileText(18)) || ''}</span><span>Télécharger la version Word (${esc(nomLangue)})</span></button>` : ''}
+      ${photosIntervention(R).some(ph => ph.dataUrl) ? `<button class="menu-item" data-a="photos-zip"><span class="ico">${(ICO.image && ICO.image(18)) || ''}</span><span>Télécharger toutes les photos (dossier .zip)</span></button>` : ''}
       <button class="menu-item" data-a="copier"><span class="ico">${(ICO.copy && ICO.copy(18)) || ''}</span><span>Copier le texte du message</span></button>
       <button class="btn grey wide" style="margin-top:10px" data-a="fermer">Fermer</button></div>`;
 
@@ -2748,7 +2960,7 @@
         if (a === 'partager' || a === 'envoyer-mail' || a === 'partager-groupe' || a === 'partager-client' || a === 'partager-sav') {
           if (dests.toStr) copier(dests.toStr);
           let peutPartager = false;
-          if (navigator.canShare && fichiers.length) {
+          if (navigator.canShare && fichiers.length && !dansUnCadre()) {
             try { peutPartager = navigator.canShare({ files: fichiers }); } catch (_) { peutPartager = false; }
           }
           if (peutPartager) {
@@ -2766,14 +2978,14 @@
               if (err && err.name !== 'AbortError') {
                 console.warn('Erreur lors du partage :', err);
                 toast('Ouverture de votre messagerie…');
-                window.location.href = mailtoUrl;
+                ouvrirMessagerie(mailtoUrl);
               }
             }
           } else {
             telecharger(lots.fr.pdf.blob, lots.fr.pdf.filename);
             if (lots.trad && lots.trad.pdf) telecharger(lots.trad.pdf.blob, lots.trad.pdf.filename);
             toast((t ? '2 PDF téléchargés' : 'PDF téléchargé') + ' — ouverture messagerie…', 3200);
-            setTimeout(() => { window.location.href = mailtoUrl; }, 300);
+            setTimeout(() => { ouvrirMessagerie(mailtoUrl); }, 300);
           }
         } else if (a === 'copier') {
           copier(corpsFinal);
@@ -2788,11 +3000,13 @@
           telecharger(lots.fr.pdf.blob, lots.fr.pdf.filename);
           if (lots.trad && lots.trad.pdf) telecharger(lots.trad.pdf.blob, lots.trad.pdf.filename);
           toast((t ? '2 PDF téléchargés' : 'PDF téléchargé') + " : pensez à l'attacher dans votre messagerie", 3400);
-          setTimeout(() => { window.location.href = mailtoUrl; }, 300);
+          setTimeout(() => { ouvrirMessagerie(mailtoUrl); }, 300);
         } else if (a === 'dl') {
           telecharger(res.blob, res.filename);
         } else if (a === 'dlt') {
           if (t && t.pdf) telecharger(t.pdf.blob, t.pdf.filename);
+        } else if (a === 'photos-zip') {
+          dossierPhotos();
         } else if (a === 'dlw') {
           if (resWord) telecharger(resWord.blob, resWord.filename);
         } else if (a === 'dlwt') {
@@ -2832,7 +3046,7 @@
   /* ===================== Mes informations ============================= */
   /* Fiche « technicien » : elle est enregistrée dans les réglages du téléphone et
      reservie automatiquement à chaque nouvelle intervention. */
-  function feuilleIdentite(premiereFois) {
+  function feuilleIdentite(premiereFois, apresEnregistrement) {
     const t = S.technicien;
     const champ = (cle, label, type, ph) => `<div class="field"><label>${esc(label)}</label>
       <input type="${type || 'text'}" data-sk="${cle}" value="${esc(t[cle.split('.')[1]] || '')}" placeholder="${esc(ph || '')}"></div>`;
@@ -2845,6 +3059,9 @@
       <div class="card"><h2>Qui suis-je ?</h2>
         <div class="grid2">${champ('technicien.prenom', 'Prénom', 'text', 'Ex. Julien')}${champ('technicien.nom', 'Nom', 'text', 'Ex. DURAND')}</div>
         ${champ('technicien.fonction', 'Fonction', 'text', 'Ex. Technicien SAV')}
+        <div class="field"><label>Code dans le n° de rapport</label>
+          <input type="text" data-sk="technicien.code" maxlength="4" autocapitalize="characters" value="${esc(t.code || '')}" placeholder="Vide = vos initiales (${esc(codeTechnicien() || 'ex. JD')})"></div>
+        <p class="hint">Exemple de numéro : <strong id="exempleNumero">${esc(numeroSuggere())}</strong>. Si un collègue a les mêmes initiales, choisissez un code différent (2 à 4 lettres ou chiffres).</p>
       </div>
 
       <div class="card"><h2>Comment me joindre ?</h2>
@@ -2875,20 +3092,184 @@
       pan.addEventListener('click', (e) => {
         if (!e.target.closest('[data-a="ok"]')) return;
         const nomAvant = Report.nomComplet(t);
-        ['technicien.prenom', 'technicien.nom', 'technicien.fonction', 'technicien.tel', 'technicien.email']
+        ['technicien.prenom', 'technicien.nom', 'technicien.fonction', 'technicien.tel', 'technicien.email', 'technicien.code']
           .forEach(k => { const el = $('[data-sk="' + k + '"]', pan); if (el) setPath(S, k, el.value.trim()); });
+        t.code = String(t.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
         if (!t.prenom && !t.nom) { toast('Indiquez au moins votre nom'); return; }
         Store.set(K.settings, S);
+        /* Numéro automatique du rapport en cours (pas encore transmis) : il prend le code. */
+        if (R.numeroAuto && R.statut !== 'transmis' && String(R.numero || '').indexOf(debutNumero()) !== 0) {
+          R.numero = numeroSuggere(R.id);
+        }
         /* Le rapport en cours suit le changement d'identité. */
         const nomApres = Report.nomComplet(t);
         if (!R.technicien || R.technicien === nomAvant) R.technicien = nomApres;
         e.target.closest('.sheet').remove();
         planifier(); rendreEntete(); rendreTout();
         toast('Bonjour ' + nomApres + ' — informations conservées', 3200);
+        if (typeof apresEnregistrement === 'function') apresEnregistrement();
       });
     });
     setTimeout(() => { const p = $('#technicien\.prenom', panneau) || panneau.querySelector('[data-sk="technicien.prenom"]'); if (p && !p.value) p.focus(); }, 80);
     return panneau;
+  }
+
+  /* ===================== Dossier photos (.zip) ======================== */
+  /* Toutes les photos de l'intervention, dans l'ordre du rapport :
+     évènements, pièces de rechange, photos complémentaires. */
+  function photosIntervention(r) {
+    r = r || R;
+    const out = [];
+    const etat = { dom: {}, cat: {} };
+    (S.domaines || []).forEach(d => { etat.dom[d.id] = d.libelle; });
+    (S.categories || []).forEach(c => { etat.cat[c.id] = c.libelle; });
+    (r.evenements || []).forEach((ev, k) => {
+      (ev.photos || []).forEach((ph, j) => {
+        if (!ph) return;
+        out.push({ type: 'evenement', dataUrl: ph.dataUrl || '', numEv: k + 1, numPhoto: j + 1,
+          heure: ev.heure, domaine: etat.dom[ev.domaine] || ev.domaine || '', categorie: etat.cat[ev.categorie] || ev.categorie || '',
+          machine: ev.machineNom || '', texte: ev.texte || '', legende: ph.legende || '' });
+      });
+    });
+    (r.pieces || []).forEach((pc, k) => {
+      if (!pc || !pc.photo) return;
+      const m = (typeof Report !== 'undefined' && Report.infoMachinePiece) ? Report.infoMachinePiece(pc, r) : { libelle: '' };
+      out.push({ type: 'piece', dataUrl: pc.photo, numPiece: k + 1, texte: pc.denomination || pc.designation || '',
+        reference: pc.reference || '', quantite: pc.quantite || 1, machine: (m && m.libelle && m.libelle !== '—') ? m.libelle : '' });
+    });
+    (r.photosLibres || []).forEach((ph, k) => {
+      if (!ph) return;
+      out.push({ type: 'libre', dataUrl: ph.dataUrl || '', numPhoto: k + 1, legende: ph.legende || '' });
+    });
+    return out;
+  }
+
+  /* Nom de fichier lisible partout (Windows, Mac, téléphone) : sans accents ni signes. */
+  function nomFichierSur(texte, max) {
+    const s = String(texte || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return s.slice(0, max || 40).replace(/-+$/, '');
+  }
+
+  async function dossierPhotos() {
+    sauver(true);
+    if (typeof RapportDB !== 'undefined') { try { await RapportDB.restaurerPhotos(R); } catch (_) {} }
+    const photos = photosIntervention(R);
+    const dispo = photos.filter(ph => ph.dataUrl);
+    if (!dispo.length) { toast('Aucune photo dans cette intervention'); return false; }
+    if (typeof Docx === 'undefined' || !Docx.zip) { toast('Création du dossier impossible sur ce navigateur'); return false; }
+    afficherChargement('Préparation du dossier photos…', dispo.length + ' photo(s)');
+    try {
+      const fichiers = [];
+      const dejaPris = new Set();
+      const unique = (chemin) => {
+        let c = chemin, k = 2;
+        const point = chemin.lastIndexOf('.');
+        while (dejaPris.has(c.toLowerCase())) { c = chemin.slice(0, point) + '-' + (k++) + chemin.slice(point); }
+        dejaPris.add(c.toLowerCase());
+        return c;
+      };
+      const pad = (n) => ('0' + n).slice(-2);
+      const lignes = [['Fichier', 'Type', 'N°', 'Heure', 'Domaine', 'Catégorie', 'Machine', 'Description', 'Référence', 'Quantité', 'Légende']];
+      for (const ph of photos) {
+        let chemin = '', type = '', num = '';
+        const ext = /^data:image\/png/i.test(ph.dataUrl) ? '.png' : '.jpg';
+        if (ph.type === 'evenement') {
+          type = 'Évènement'; num = ph.numEv + (ph.numPhoto > 1 ? '.' + ph.numPhoto : '');
+          chemin = '1-Evenements/E' + pad(ph.numEv) + '-' + ph.numPhoto + '_' + nomFichierSur(ph.categorie, 20) +
+            (ph.texte ? '_' + nomFichierSur(ph.texte, 40) : '') + ext;
+        } else if (ph.type === 'piece') {
+          type = 'Pièce de rechange'; num = ph.numPiece;
+          chemin = '2-Pieces/P' + pad(ph.numPiece) + '_' + nomFichierSur(ph.texte, 40) +
+            (ph.reference ? '_' + nomFichierSur(ph.reference, 30) : '') + ext;
+        } else {
+          type = 'Photo complémentaire'; num = ph.numPhoto;
+          chemin = '3-Photos-complementaires/PC' + pad(ph.numPhoto) + (ph.legende ? '_' + nomFichierSur(ph.legende, 40) : '') + ext;
+        }
+        chemin = unique(chemin);
+        if (ph.dataUrl) fichiers.push({ nom: chemin, donnees: Docx.dataUrlToBytes(ph.dataUrl) });
+        lignes.push([ph.dataUrl ? chemin : '(photo introuvable sur ce téléphone)', type, num,
+          ph.heure ? Report.heureFr(ph.heure) : '', ph.domaine || '', ph.categorie || '', ph.machine || '',
+          ph.texte || '', ph.reference || '', ph.quantite || '', ph.legende || '']);
+      }
+      /* Index ouvrable dans Excel : point-virgule et BOM UTF-8 pour les accents. */
+      const csv = '\ufeff' + lignes.map(l => l.map(v => {
+        const s = String(v == null ? '' : v).replace(/\r?\n/g, ' ');
+        return /[;"]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(';')).join('\r\n');
+      fichiers.unshift({ nom: 'Liste-des-photos.csv', donnees: Docx.utf8(csv) });
+      const octets = Docx.zip(fichiers);
+      const nom = 'Photos_' + nomFichierSur(R.numero, 30) + '_' + nomFichierSur(R.client && R.client.nom, 30) + '_' + (R.date || todayISO()) + '.zip';
+      masquerChargement();
+      const ok = await telecharger(new Blob([octets], { type: 'application/zip' }), nom);
+      if (ok) toast('Dossier photos enregistré : ' + dispo.length + ' photo(s)', 3200);
+      return ok;
+    } catch (err) {
+      masquerChargement();
+      console.error('Dossier photos :', err);
+      toast('Création du dossier photos impossible', 4000);
+      return false;
+    }
+  }
+
+  /* Sauvegarde complète (tous les rapports avec leurs photos + réglages) en JSON.
+     Renvoie true si le fichier a bien été remis (téléchargé / enregistré). */
+  async function exporterSauvegarde() {
+    sauver(true);
+    let listeExport = [];
+    if (typeof RapportDB !== 'undefined' && RapportDB.disponible()) {
+      try { listeExport = await RapportDB.tousLesRapports(); } catch (e) { listeExport = []; }
+    }
+    if (!listeExport || !listeExport.length) listeExport = Store.get(K.rapports, []);
+    if (R && R.id) {
+      const idx = listeExport.findIndex(x => x.id === R.id);
+      if (idx >= 0) listeExport[idx] = R; else listeExport.unshift(R);
+    }
+    if (typeof RapportDB !== 'undefined') {
+      for (const rep of listeExport) await RapportDB.restaurerPhotos(rep);
+      await RapportDB.restaurerPhotos(R);
+    }
+    const totalPhotos = listeExport.reduce((acc, rep) => {
+      const evPh = (rep.evenements || []).reduce((a, e) => a + ((e.photos || []).filter(p => p && p.dataUrl).length), 0);
+      const libPh = (rep.photosLibres || []).filter(p => p && p.dataUrl).length;
+      const pcPh = (rep.pieces || []).filter(p => p && p.photo).length;
+      return acc + evPh + libPh + pcPh;
+    }, 0);
+    const ok = await telecharger(
+      new Blob([JSON.stringify({ version: 3, exporte: new Date().toISOString(), reglages: S, rapport: R, rapports: listeExport }, null, 1)], { type: 'application/json' }),
+      'sauvegarde_rapports_' + todayISO() + '.json'
+    );
+    if (ok) {
+      Store.set('sav3.derniereSauvegarde', new Date().toISOString());
+      toast(`Sauvegarde exportée (${listeExport.length} rapport(s), ${totalPhotos} photo(s) incluses)`, 3500);
+    }
+    return ok;
+  }
+
+  /* Réglages d'équipe : tout ce qui est commun aux techniciens (adresses d'envoi,
+     société, mise en page…), sans les informations personnelles du technicien. */
+  const CLES_EQUIPE = ['societe', 'mail', 'impression', 'domaines', 'categories', 'canevas', 'numeroPrefixe'];
+  function reglagesEquipe() {
+    const out = { type: 'reglages-equipe-bfr', version: 1, exporte: new Date().toISOString() };
+    CLES_EQUIPE.forEach(k => { if (S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
+    return out;
+  }
+  function importerReglagesEquipe(texte) {
+    let d;
+    try { d = JSON.parse(texte); } catch (e) { return 0; }
+    if (!d || typeof d !== 'object') return 0;
+    // accepte aussi une sauvegarde complète (on n'en prend que la partie équipe)
+    const src = d.type === 'reglages-equipe-bfr' ? d : (d.reglages && typeof d.reglages === 'object' ? d.reglages : null);
+    if (!src) return 0;
+    let n = 0;
+    CLES_EQUIPE.forEach(k => {
+      if (src[k] === undefined) return;
+      S[k] = (src[k] && typeof src[k] === 'object' && !Array.isArray(src[k]) && S[k] && typeof S[k] === 'object')
+        ? fusion(S[k], src[k]) : src[k];
+      n++;
+    });
+    if (n) { Store.set(K.settings, S); Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = ''; }
+    return n;
   }
 
   /* ===================== Réglages ===================================== */
@@ -2979,11 +3360,20 @@
         </div>
       </div>
 
+      <div class="card"><h2>Réglages d'équipe</h2>
+        <p class="small">Un seul fichier pour configurer un téléphone neuf comme les autres : adresses d'envoi
+        (responsable SAV, assistant, copies), société, mise en page, canevas, domaines et catégories.
+        Vos informations personnelles (nom, téléphone, signature) n'y figurent pas.</p>
+        <div class="filebtn"><input type="file" id="equipeImport" accept=".json,application/json">
+          <label for="equipeImport">${(ICO.download && ICO.download(16)) || ''} Importer les réglages d'équipe</label></div>
+        <div class="btnrow"><button class="btn grey" type="button" data-a="equipe-export">Exporter les réglages d'équipe</button></div>
+      </div>
+
       <div class="card"><h2>Envoi du rapport</h2>
-        ${f('mail.destinataireSAV', 'E-mail du responsable SAV', 'email', 'Ex. s.peyaud@bfrsystems.com')}
-        ${f('mail.assistantSAV', 'E-mail de l\'assistant SAV (en copie systématique)', 'email', 'Ex. assistant.sav@bfrsystems.com')}
+        ${f('mail.destinataireSAV', 'E-mail du responsable SAV', 'email', 'Ex. prenom.nom@societe.fr')}
+        ${f('mail.assistantSAV', 'E-mail de l\'assistant SAV (en copie systématique)', 'email', 'Ex. assistant@societe.fr')}
         <p class="small" style="margin-top:-6px;margin-bottom:10px;color:#64748b">L'assistant SAV recevra systématiquement tous les e-mails adressés au responsable SAV en copie conforme (Cc).</p>
-        ${f('mail.destinatairesCopie', 'Autres copies conformes (CC)', 'email', 'Ex. direction@bfrsystems.com, support@bfrsystems.com')}
+        ${f('mail.destinatairesCopie', 'Autres copies conformes (CC)', 'email', 'Ex. direction@societe.fr, support@societe.fr')}
         <div class="agreement"><input type="checkbox" id="chkClient" ${S.mail.envoyerClient ? 'checked' : ''}><label for="chkClient">Envoyer aussi au client</label></div>
         <div class="agreement"><input type="checkbox" id="chkSAV" ${S.mail.envoyerSAV ? 'checked' : ''}><label for="chkSAV">Envoyer au responsable SAV (avec assistant SAV en copie)</label></div>
         ${f('mail.objet', 'Objet du mail')}
@@ -2995,6 +3385,15 @@
       <div class="card"><h2>Canevas du rapport (avancé)</h2>
         <p class="small">Le canevas décrit l'ordre des sections du rapport. Types acceptés : <code>synthese</code>, <code>evenements</code> (avec <code>categories</code>), <code>texte</code> (avec <code>champ</code> : actions, aPrevoir, resumeTechnicien, objet), <code>pieces</code>, <code>photos</code>, <code>signature</code>.</p>
         <textarea id="setCanevas" rows="12" style="width:100%;font-family:ui-monospace,monospace;font-size:12px">${esc(JSON.stringify(S.canevas, null, 1))}</textarea>
+      </div>
+
+      <div class="card"><h2>Mise en page du rapport</h2>
+        <div class="field"><label for="setMiseEnPage">Évènements dans le PDF et le Word</label>
+          <select id="setMiseEnPage" style="width:100%">
+            <option value="compacte"${(S.impression.miseEnPageEvenements || 'compacte') === 'compacte' ? ' selected' : ''}>Compacte : à la suite, selon le nombre de photos</option>
+            <option value="unParPage"${S.impression.miseEnPageEvenements === 'unParPage' ? ' selected' : ''}>Une page par évènement</option>
+          </select></div>
+        <p class="small">Compacte : sans photo, l'évènement prend juste la place de son texte ; avec 1 photo, texte à gauche et photo à droite ; avec 2 photos ou plus, les photos côte à côte sous le texte. Un évènement n'est jamais coupé entre deux pages.</p>
       </div>
 
       <div class="card"><h2>Domaines et catégories (avancé)</h2>
@@ -3016,6 +3415,21 @@
         e.target.previousElementSibling; // rien
       });
       /* ---------- Liste clients : import / export / remise à zéro ---------- */
+      $('#equipeImport', panneau).addEventListener('change', (ev) => {
+        const fichier = ev.target.files && ev.target.files[0];
+        if (!fichier) return;
+        const lecteur = new FileReader();
+        lecteur.onload = () => {
+          const n = importerReglagesEquipe(lecteur.result);
+          if (!n) { toast('Fichier illisible : attendu un fichier de réglages d\'équipe (.json)', 4000); return; }
+          toast('Réglages d\'équipe importés', 3000);
+          const feuille = ev.target.closest('.sheet');
+          if (feuille) feuille.remove();
+          feuilleReglages();
+        };
+        lecteur.onerror = () => toast('Lecture impossible');
+        lecteur.readAsText(fichier, 'utf-8');
+      });
       $('#clientsImport', panneau).addEventListener('change', (ev) => {
         const fichier = ev.target.files && ev.target.files[0];
         if (!fichier) return;
@@ -3060,6 +3474,12 @@
         }
         if (e.target.closest('[data-a="identite"]')) { e.target.closest('.sheet').remove(); feuilleIdentite(); return; }
         if (e.target.closest('[data-a="ouvrir-annuaire"]')) { e.target.closest('.sheet').remove(); feuilleAnnuaireClients(); return; }
+        if (e.target.closest('[data-a="equipe-export"]')) {
+          const contenu = JSON.stringify(reglagesEquipe(), null, 1);
+          telecharger(new Blob([contenu], { type: 'application/json' }), 'reglages-equipe-' + todayISO() + '.json');
+          toast('Réglages d\'équipe exportés : transmettez le fichier aux collègues');
+          return;
+        }
         if (e.target.closest('[data-a="clients-export"]')) {
           const contenu = JSON.stringify({ clients: Clients.liste() }, null, 1);
           telecharger(new Blob([contenu], { type: 'application/json' }), 'clients-bfr-' + todayISO() + '.json');
@@ -3069,10 +3489,15 @@
           const message = Clients.embarques().length
             ? "Revenir à la liste clients embarquée dans l'application ?"
             : "Effacer la liste clients importée dans ce téléphone ?\nVous pourrez réimporter le fichier à tout moment.";
-          if (!confirm(message + "\nLes données enrichies (téléphones, e-mails, logos saisis sur le terrain) sont conservées.")) return;
-          Clients.revenirListeOrigine();
-          toast('Liste d\'origine rétablie');
-          e.target.closest('.sheet').remove(); feuilleReglages(); return;
+          const feuille = e.target.closest('.sheet');
+          Dialogue.confirmer(message + "\nLes données enrichies (téléphones, e-mails, logos saisis sur le terrain) sont conservées.", { ok: 'Rétablir' }).then((oui) => {
+            if (!oui) return;
+            Clients.revenirListeOrigine();
+            toast('Liste d\'origine rétablie');
+            if (feuille) feuille.remove();
+            feuilleReglages();
+          });
+          return;
         }
         const b = e.target.closest('[data-a="enregistrer"]');
         if (!b) return;
@@ -3084,6 +3509,7 @@
         const saisieCorps = ($('#setCorps', panneau).value || '').trim();
         S.mail.corps = (saisieCorps === Report.defaultCorpsMail().trim()) ? '' : saisieCorps;
         S.impression.mentionClient = $('#setMention', panneau).value;
+        S.impression.miseEnPageEvenements = $('#setMiseEnPage', panneau).value === 'unParPage' ? 'unParPage' : 'compacte';
         S.mail.envoyerClient = $('#chkClient', panneau).checked;
         S.mail.envoyerSAV = $('#chkSAV', panneau).checked;
         try {
@@ -3569,11 +3995,12 @@
         const btnResetFiche = ev.target.closest('[data-a="reinitialiser-fiche"]');
         if (btnResetFiche) {
           const nom = ($('#annNom', zoneCorps).value || '').trim();
-          if (confirm('Supprimer les données locales enregistrées pour « ' + nom + ' » et revenir aux données d\'origine ?')) {
+          Dialogue.confirmer('Supprimer les données locales enregistrées pour « ' + nom + ' » et revenir aux données d\'origine ?', { ok: 'Réinitialiser', danger: true }).then((oui) => {
+            if (!oui) return;
             Clients.oublier(nom);
             toast('Fiche ' + nom + ' réinitialisée');
             afficherListe();
-          }
+          });
           return;
         }
 
@@ -3679,50 +4106,21 @@
         else if (a === 'reglages') feuilleReglages();
         else if (a === 'actualiser') actualiserApp();
         else if (a === 'nouveau') {
-          if (!confirm('Créer une nouvelle intervention ?')) return;
-          sauver(true);
-          R = nouvelleIntervention();
-          Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
-          Store.set(K.rapport, R);
-          // pas d'enregistrement en base tant que le rapport est vierge (voir rapportVierge)
-          rendreTout();
-          toast('Nouvelle intervention — N° ' + R.numero);
+          Dialogue.confirmer('Créer une nouvelle intervention ? Le rapport en cours reste dans l\'historique.', { ok: 'Créer' }).then((oui) => {
+            if (!oui) return;
+            sauver(true);
+            R = nouvelleIntervention();
+            R.numeroAuto = true;
+            Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
+            Store.set(K.rapport, R);
+            // pas d'enregistrement en base tant que le rapport est vierge (voir rapportVierge)
+            rendreTout();
+            toast('Nouvelle intervention — N° ' + R.numero);
+          });
         } else if (a === 'historique') feuilleHistorique();
         else if (a === 'aide') feuilleAide();
-        else if (a === 'export') {
-          sauver(true);
-          (async () => {
-            let listeExport = [];
-            if (typeof RapportDB !== 'undefined' && RapportDB.disponible()) {
-              try { listeExport = await RapportDB.tousLesRapports(); } catch (e) { listeExport = []; }
-            }
-            if (!listeExport || !listeExport.length) {
-              listeExport = Store.get(K.rapports, []);
-            }
-            if (R && R.id) {
-              const idx = listeExport.findIndex(x => x.id === R.id);
-              if (idx >= 0) listeExport[idx] = R; else listeExport.unshift(R);
-            }
-            if (typeof RapportDB !== 'undefined') {
-              for (const rep of listeExport) {
-                await RapportDB.restaurerPhotos(rep);
-              }
-              await RapportDB.restaurerPhotos(R);
-            }
-            const totalPhotos = listeExport.reduce((acc, rep) => {
-              const evPh = (rep.evenements || []).reduce((a, e) => a + ((e.photos || []).filter(p => p && p.dataUrl).length), 0);
-              const libPh = (rep.photosLibres || []).filter(p => p && p.dataUrl).length;
-              const pcPh = (rep.pieces || []).filter(p => p && p.photo).length;
-              return acc + evPh + libPh + pcPh;
-            }, 0);
-            telecharger(
-              new Blob([JSON.stringify({ version: 3, exporte: new Date().toISOString(), reglages: S, rapport: R, rapports: listeExport }, null, 1)], { type: 'application/json' }),
-              'sauvegarde_rapports_' + todayISO() + '.json'
-            );
-            Store.set('sav3.derniereSauvegarde', new Date().toISOString());
-            toast(`Sauvegarde exportée (${listeExport.length} rapport(s), ${totalPhotos} photo(s) incluses)`);
-          })();
-        } else if (a === 'import') {
+        else if (a === 'export') exporterSauvegarde();
+        else if (a === 'import') {
           const inp = document.createElement('input');
           inp.type = 'file'; inp.accept = '.json,application/json';
           inp.onchange = () => {
@@ -3810,79 +4208,130 @@
     });
   }
 
+  /* ===================== Rapports enregistrés ======================== */
+  const MOIS_MENAGE = 6;
   async function feuilleHistorique() {
-    let liste = [];
+    /* Liste légère : seulement les résumés (numéro, client, date, nombre de photos…).
+       Les photos ne sont chargées qu'à la réouverture d'un rapport. */
+    let liste = null;
     if (typeof RapportDB !== 'undefined' && RapportDB.disponible()) {
-      try { liste = await RapportDB.tousLesRapports(); } catch (e) { liste = []; }
+      try { liste = await RapportDB.resumes(); } catch (e) { liste = null; }
     }
     if (!liste || !liste.length) {
-      liste = Store.get(K.rapports, []);
+      liste = Store.get(K.rapports, []).filter(Boolean).map(r => RapportDB.resume(r, null));
     }
     if (R && R.id && !rapportVierge(R)) {
+      const resumeR = RapportDB.resume(R, null);
+      resumeR.perdues = RapportDB.imagesManquantes ? RapportDB.imagesManquantes(R) : 0;
       const idx = liste.findIndex(x => x.id === R.id);
-      if (idx >= 0) liste[idx] = R; else liste.unshift(R);
+      if (idx >= 0) liste[idx] = resumeR; else liste.unshift(resumeR);
     }
-    liste = liste.filter(r => r && (r.id === R.id || !rapportVierge(r)));
+    liste = liste.filter(r => r && r.id && (r.id === R.id || !r.vierge));
     liste.sort((a, b) => ((b.maj || b.cree || b.date || '') > (a.maj || a.cree || a.date || '') ? 1 : -1));
 
-    const compterPhotos = (r) => {
-      const evPh = (r.evenements || []).reduce((a, e) => a + ((e.photos || []).filter(p => p && (p.dataUrl || p.id)).length), 0);
-      const libPh = (r.photosLibres || []).filter(p => p && (p.dataUrl || p.id)).length;
-      const pcPh = (r.pieces || []).filter(p => p && p.photo).length;
-      return evPh + libPh + pcPh;
-    };
+    // Ménage : rapports terminés (signés, terminés ou transmis) de plus de 6 mois
+    const limite = new Date(); limite.setMonth(limite.getMonth() - MOIS_MENAGE);
+    const limiteISO = limite.toISOString().slice(0, 10);
+    const anciens = liste.filter(r => r.id !== R.id && ['transmis', 'signé', 'terminé'].indexOf(r.statut) !== -1
+      && String(r.date || r.maj || '').slice(0, 10) < limiteISO);
+
+    let recherche = '';
+    const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const carte = (r) => `<div class="menu-item" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <strong>${esc(r.numero || '—')} — ${esc(r.client.nom || 'client ?')}</strong>
+          <span class="pill">${esc(r.statut || 'brouillon')}</span></div>
+        <div class="small">${esc(Report.frDate(r.date))}${r.machine.designation ? ' • ' + esc(r.machine.designation) : ''} • ${r.nbEvenements} évènement(s)${r.nbPhotos ? ' • ' + r.nbPhotos + ' photo(s)' : ''}${r.id === R.id ? ' • <strong>en cours</strong>' : ''}</div>
+        ${r.perdues ? `<div class="small" style="color:#b45309">⚠ ${r.perdues} photo(s) introuvable(s) sur ce téléphone (rapport enregistré par une ancienne version). Elles restent dans le PDF déjà envoyé.</div>` : ''}
+        <div class="btnrow"><button class="btn sm grey" data-ouvrir="${esc(r.id)}">Rouvrir</button>
+          <button class="btn sm danger" data-suppr="${esc(r.id)}">Supprimer</button></div></div>`;
 
     Ouvrir.ouvrir(null, `<div class="panel">
       <div class="grab"></div><h3>Rapports enregistrés</h3>
       <p class="sub">${liste.length} rapport(s) sur ce téléphone.</p>
-      ${liste.map(r => {
-        const nbPh = compterPhotos(r);
-        const perdues = RapportDB.imagesManquantes ? RapportDB.imagesManquantes(r) : 0;
-        return `<div class="menu-item" style="flex-direction:column;align-items:stretch;gap:6px">
-        <div style="display:flex;justify-content:space-between;gap:8px">
-          <strong>${esc(r.numero || '—')} — ${esc((r.client && r.client.nom) || 'client ?')}</strong>
-          <span class="pill">${esc(r.statut || 'brouillon')}</span></div>
-        <div class="small">${esc(Report.frDate(r.date))} • ${esc((r.machine && r.machine.designation) || '')} • ${(r.evenements || []).length} évènement(s)${nbPh ? ' • ' + nbPh + ' photo(s)' : ''}</div>
-        ${perdues ? `<div class="small" style="color:#b45309">⚠ ${perdues} photo(s) introuvable(s) sur ce téléphone (rapport enregistré par une ancienne version). Elles restent dans le PDF déjà envoyé.</div>` : ''}
-        <div class="btnrow"><button class="btn sm grey" data-ouvrir="${r.id}">Rouvrir</button>
-          <button class="btn sm danger" data-suppr="${r.id}">Supprimer</button></div></div>`;
-      }).join('') || '<p class="small">Aucun rapport enregistré.</p>'}
+      ${liste.length > 3 ? `<div class="field"><input type="search" id="histRecherche" placeholder="Rechercher : client, n°, machine, date (ex. 03/2026)" autocomplete="off"></div>` : ''}
+      <div id="histListe"></div>
+      ${anciens.length ? `<div class="sticky-note" style="margin-top:10px">
+        <strong>${anciens.length} rapport(s) terminé(s) de plus de ${MOIS_MENAGE} mois</strong> occupent de la place sur ce téléphone.
+        <div class="btnrow" style="margin-top:8px"><button class="btn sm grey" data-a="menage">Faire le ménage</button></div></div>` : ''}
       <button class="btn grey wide" data-a="fermer">Fermer</button></div>`, (panneau) => {
+      const zone = $('#histListe', panneau);
+      function afficher() {
+        const q = norm(recherche).trim();
+        const visibles = q ? liste.filter(r => norm([r.numero, r.client.nom, r.machine.designation, Report.frDate(r.date), r.statut].join(' ')).indexOf(q) !== -1) : liste;
+        zone.innerHTML = visibles.map(carte).join('') ||
+          (q ? '<p class="small">Aucun rapport ne correspond à « ' + esc(recherche) + ' ».</p>' : '<p class="small">Aucun rapport enregistré.</p>');
+      }
+      afficher();
+      const champ = $('#histRecherche', panneau);
+      if (champ) champ.addEventListener('input', () => { recherche = champ.value; afficher(); });
+
       panneau.addEventListener('click', async (e) => {
         const sup = e.target.closest('[data-suppr]');
         const ouv = e.target.closest('[data-ouvrir]');
+        if (e.target.closest('[data-a="menage"]')) {
+          await faireMenage(anciens);
+          const feuille = panneau.closest('.sheet');
+          if (feuille) feuille.remove();
+          feuilleHistorique();
+          return;
+        }
         if (sup) {
-          if (!confirm('Supprimer définitivement ce rapport ?')) return;
           const id = sup.dataset.suppr;
+          if (id === R.id) { toast('C\'est le rapport en cours : créez d\'abord une nouvelle intervention', 4000); return; }
+          if (!(await Dialogue.confirmer('Supprimer définitivement ce rapport et ses photos ?', { ok: 'Supprimer', danger: true }))) return;
           if (typeof RapportDB !== 'undefined') await RapportDB.supprimerRapport(id);
           Store.set(K.rapports, Store.get(K.rapports, []).filter(x => x.id !== id));
-          e.target.closest('.sheet').remove();
-          feuilleHistorique();
+          liste = liste.filter(x => x.id !== id);
+          afficher();
+          toast('Rapport supprimé');
         } else if (ouv) {
           const id = ouv.dataset.ouvrir;
-          if (!confirm('Rouvrir ce rapport ? Le rapport en cours sera conservé au préalable.')) return;
+          if (id === R.id) { panneau.closest('.sheet').remove(); return; }
+          if (!(await Dialogue.confirmer('Rouvrir ce rapport ? Le rapport en cours sera conservé au préalable.', { ok: 'Rouvrir' }))) return;
           sauver(true);
           let r = null;
-          if (typeof RapportDB !== 'undefined' && RapportDB.disponible()) {
-            r = await RapportDB.getRapport(id);
-          }
-          if (!r) {
-            r = Store.get(K.rapports, []).find(x => x.id === id);
-          }
+          if (typeof RapportDB !== 'undefined' && RapportDB.disponible()) r = await RapportDB.getRapport(id);
+          if (!r) r = Store.get(K.rapports, []).find(x => x.id === id);
           if (r) {
             if (typeof RapportDB !== 'undefined') await RapportDB.restaurerPhotos(r);
             R = fusion(nouvelleIntervention(), r);
+            if (r.numeroAuto === undefined) R.numeroAuto = false;
             Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
             Store.set(K.rapport, R);
             if (typeof RapportDB !== 'undefined') await RapportDB.sauverRapport(R);
           }
-          e.target.closest('.sheet').remove();
+          const feuille = panneau.closest('.sheet');
+          if (feuille) feuille.remove();
           rendreTout();
           const nbPerdues = RapportDB.imagesManquantes ? RapportDB.imagesManquantes(R) : 0;
           toast(nbPerdues ? 'Rapport ' + R.numero + ' chargé — ' + nbPerdues + ' photo(s) introuvable(s)' : 'Rapport ' + R.numero + ' chargé avec ses photos', nbPerdues ? 5000 : 2600);
         }
       });
     });
+  }
+
+  /* Supprime les rapports terminés anciens, seulement après une sauvegarde complète
+     récente (moins de 24 h) : rien n'est perdu, tout est dans le fichier exporté. */
+  async function faireMenage(anciens) {
+    if (!anciens || !anciens.length) return;
+    const derniere = Store.get('sav3.derniereSauvegarde', null);
+    const recente = derniere && (Date.now() - new Date(derniere).getTime()) < 24 * 3600 * 1000;
+    if (!recente) {
+      const ok = await Dialogue.confirmer('Avant de supprimer quoi que ce soit, exportez une sauvegarde complète (tous les rapports et leurs photos). Rangez ensuite le fichier en lieu sûr (Drive, e-mail…).',
+        { ok: 'Exporter la sauvegarde', annuler: 'Annuler' });
+      if (!ok) return;
+      const exporte = await exporterSauvegarde();
+      if (!exporte) { toast('Sauvegarde non enregistrée : ménage annulé', 4000); return; }
+    }
+    const plusRecent = anciens.reduce((m, r) => (r.date > m ? r.date : m), '');
+    const oui = await Dialogue.confirmer('Supprimer de ce téléphone ' + anciens.length + ' rapport(s) terminé(s) datant au plus tard du ' +
+      Report.frDate(plusRecent) + ' ?\nIls restent dans la sauvegarde exportée et dans les PDF déjà envoyés.', { ok: 'Supprimer', danger: true });
+    if (!oui) return;
+    const ids = new Set(anciens.map(r => r.id));
+    for (const id of ids) { if (typeof RapportDB !== 'undefined') await RapportDB.supprimerRapport(id); }
+    Store.set(K.rapports, Store.get(K.rapports, []).filter(x => !ids.has(x.id)));
+    toast(ids.size + ' rapport(s) supprimé(s) de ce téléphone', 3500);
   }
 
   function feuilleAide() {
@@ -3935,7 +4384,14 @@
       const b = e.target.closest('[data-a]');
       if (!b) return;
       const a = b.dataset.a;
-      if (a === 'chrono-demarrer') demarrerChrono();
+      if (a === 'chrono-demarrer') {
+        /* Pas d'intervention sans technicien identifié : son nom et son code
+           figurent dans le rapport et dans son numéro. */
+        if (!Report.nomComplet(S.technicien)) {
+          toast('Indiquez d\'abord votre nom : il figure sur le rapport', 3200);
+          feuilleIdentite(true, demarrerChrono);
+        } else demarrerChrono();
+      }
       else if (a === 'chrono-pause') basculerPause();
       else if (a === 'chrono-terminer') terminerChrono();
       else if (a === 'chrono-ajuster') feuilleAjusterChrono();
@@ -3960,22 +4416,28 @@
       else if (a === 'supprimer-piece') {
         const id = b.dataset.id;
         const idx = (R.pieces || []).findIndex(p => p.id === id);
-        if (idx >= 0 && confirm('Supprimer cette pièce de rechange ?')) {
-          R.pieces.splice(idx, 1);
+        if (idx >= 0) Dialogue.confirmer('Supprimer cette pièce de rechange ?', { ok: 'Supprimer', danger: true }).then((oui) => {
+          if (!oui) return;
+          const i2 = (R.pieces || []).findIndex(p => p.id === id);
+          if (i2 < 0) return;
+          R.pieces.splice(i2, 1);
           planifier(); rendreTout();
           toast('Pièce supprimée');
-        }
+        });
       }
       else if (a === 'signer') signerClient();
       else if (a === 'effacer-signature') {
-        if (!confirm('Effacer la signature du client ?')) return;
-        R.signatureClient = { nom: '', fonction: '', dataUrl: '', date: '', heure: '' };
-        R.statut = R.chrono.fin ? 'terminé' : R.statut;
-        planifier(); rendreTout();
+        Dialogue.confirmer('Effacer la signature du client ?', { ok: 'Effacer', danger: true }).then((oui) => {
+          if (!oui) return;
+          R.signatureClient = { nom: '', fonction: '', dataUrl: '', date: '', heure: '' };
+          R.statut = R.chrono.fin ? 'terminé' : R.statut;
+          planifier(); rendreTout();
+        });
       }
       else if (a === 'soumettre') soumettre();
       else if (a === 'apercu') apercuPDF();
       else if (a === 'word') docx().then(res => { telecharger(res.blob, res.filename); toast('Version Word enregistrée'); });
+      else if (a === 'photos-zip') dossierPhotos();
       else if (a === 'menu') feuilleMenu();
       else if (a === 'identite') feuilleIdentite();
       else if (a === 'photos-libres') feuillePhotosLibres();
@@ -4541,20 +5003,23 @@
           return;
         }
         if (e.target.closest('[data-a="supprimer-trajet"]')) {
-          if (!confirm('Voulez-vous retirer le temps de route de ce rapport ?')) return;
-          R.trajet = {
-            actif: false,
-            allerDateDepart: '', allerHeureDepart: '', allerDateArrivee: '', allerHeureArrivee: '', allerDureeMinutes: 0,
-            retourDateDepart: '', retourHeureDepart: '', retourDateArrivee: '', retourHeureArrivee: '', retourDureeMinutes: 0, retourEstime: true,
-            retourReelDateDepart: '', retourReelHeureDepart: '', retourReelDateArrivee: '', retourReelHeureArrivee: '', retourReelDureeMinutes: 0,
-            retourCloture: false, note: ''
-          };
-          sauver(true);
-          Cache.pdf = Cache.docx = null;
-          Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
-          rendreTout();
-          pEl.closest('.sheet').remove();
-          toast('Temps de route retiré');
+          Dialogue.confirmer('Voulez-vous retirer le temps de route de ce rapport ?', { ok: 'Retirer', danger: true }).then((oui) => {
+            if (!oui) return;
+            R.trajet = {
+              actif: false,
+              allerDateDepart: '', allerHeureDepart: '', allerDateArrivee: '', allerHeureArrivee: '', allerDureeMinutes: 0,
+              retourDateDepart: '', retourHeureDepart: '', retourDateArrivee: '', retourHeureArrivee: '', retourDureeMinutes: 0, retourEstime: true,
+              retourReelDateDepart: '', retourReelHeureDepart: '', retourReelDateArrivee: '', retourReelHeureArrivee: '', retourReelDureeMinutes: 0,
+              retourCloture: false, note: ''
+            };
+            sauver(true);
+            Cache.pdf = Cache.docx = null;
+            Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
+            rendreTout();
+            const feuille = pEl.closest('.sheet');
+            if (feuille) feuille.remove();
+            toast('Temps de route retiré');
+          });
           return;
         }
         if (e.target.closest('[data-a="sauvegarder-trajet"]')) {
@@ -4612,7 +5077,10 @@
     if (!Report.nomComplet(S.technicien)) setTimeout(() => {
       if (!document.querySelector('.sheet, .assistant')) feuilleIdentite(true);
     }, 900);
-    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+    // Pas de service worker dans un cadre (artefact Claude, aperçu) : seulement en page principale
+    let pagePrincipale = true;
+    try { pagePrincipale = window.self === window.top; } catch (_) { pagePrincipale = false; }
+    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0 && pagePrincipale) {
       navigator.serviceWorker.register('sw.js').then((reg) => {
         try { reg.update(); } catch (_) {}
         reg.addEventListener('updatefound', () => {

@@ -230,6 +230,10 @@
       es: 'Resumen del técnico', it: 'Sintesi del tecnico', pt: 'Resumo do técnico'
     },
     'Évènements': { en: 'Events', de: 'Ereignisse', nl: 'Gebeurtenissen', es: 'Eventos', it: 'Eventi', pt: 'Eventos' },
+    'évènements': { en: 'events', de: 'Ereignisse', nl: 'gebeurtenissen', es: 'eventos', it: 'eventi', pt: 'eventos' },
+    'Évènement': { en: 'Event', de: 'Ereignis', nl: 'Gebeurtenis', es: 'Evento', it: 'Evento', pt: 'Evento' },
+    'suite': { en: 'continued', de: 'Fortsetzung', nl: 'vervolg', es: 'continuación', it: 'segue', pt: 'continuação' },
+    'Photo': { en: 'Photo', de: 'Foto', nl: 'Foto', es: 'Foto', it: 'Foto', pt: 'Foto' },
     'Événements': { en: 'Events', de: 'Ereignisse', nl: 'Gebeurtenissen', es: 'Eventos', it: 'Eventi', pt: 'Eventos' },
     'Texte': { en: 'Text', de: 'Text', nl: 'Tekst', es: 'Texto', it: 'Testo', pt: 'Texto' },
     'Photos': { en: 'Photos', de: 'Fotos', nl: "Foto's", es: 'Fotos', it: 'Foto', pt: 'Fotos' },

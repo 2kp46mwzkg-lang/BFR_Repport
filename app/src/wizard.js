@@ -141,8 +141,11 @@
       this.fermer();
     }
 
-    supprimer() {
-      if (!confirm('Supprimer cet évènement ?')) return;
+    async supprimer() {
+      const demande = (typeof window !== 'undefined' && window.Dialogue)
+        ? window.Dialogue.confirmer('Supprimer cet évènement ?', { ok: 'Supprimer', danger: true })
+        : Promise.resolve(confirm('Supprimer cet évènement ?'));
+      if (!(await demande)) return;
       if (this.ctx.onSupprimer) this.ctx.onSupprimer(this.ev);
       this.fermer();
     }

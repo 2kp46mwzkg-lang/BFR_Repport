@@ -204,11 +204,16 @@
       e.preventDefault();
       if (this.outil === 'texte') {
         const p = this.relatif(e);
-        const texte = prompt('Texte à afficher sur la photo :');
-        if (texte && texte.trim()) {
-          this.annotations.push({ type: 'texte', couleur: this.couleur, points: [p], texte: texte.trim(), taille: 0.045 });
-          this.redessiner();
-        }
+        const demande = (typeof window !== 'undefined' && window.Dialogue)
+          ? window.Dialogue.saisir('Texte à afficher sur la photo :')
+          : Promise.resolve(prompt('Texte à afficher sur la photo :'));
+        const couleur = this.couleur;
+        demande.then((texte) => {
+          if (texte && texte.trim()) {
+            this.annotations.push({ type: 'texte', couleur: couleur, points: [p], texte: texte.trim(), taille: 0.045 });
+            this.redessiner();
+          }
+        });
         return;
       }
       const p = this.relatif(e);

@@ -50,13 +50,17 @@
 
     function u16(n) { return [n & 0xFF, (n >> 8) & 0xFF]; }
     function u32(n) { return [n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >>> 24) & 0xFF]; }
+    /* Date et heure du jour au format DOS (sinon les fichiers s'affichent datés de 1980). */
+    const d = new Date();
+    const heureDos = (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
+    const dateDos = ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
 
     fichiers.forEach(function (f) {
       const nom = utf8(f.nom);
       const crc = crc32(f.donnees);
       const taille = f.donnees.length;
       const entete = new Uint8Array([].concat(
-        u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+        u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(heureDos), u16(dateDos),
         u32(crc), u32(taille), u32(taille), u16(nom.length), u16(0)
       ));
       morceaux.push(entete, nom, f.donnees);
@@ -68,7 +72,7 @@
     let tailleCentral = 0;
     central.forEach(function (c) {
       const e = new Uint8Array([].concat(
-        u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(0), u16(0),
+        u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(heureDos), u16(dateDos),
         u32(c.crc), u32(c.taille), u32(c.taille), u16(c.nom.length), u16(0), u16(0),
         u16(0), u16(0), u32(0), u32(c.offset)
       ));
@@ -150,6 +154,7 @@
       const props = [];
       const align = { center: 'center', right: 'right', both: 'both' }[opt.align] || 'left';
       if (align !== 'left') props.push(`<w:jc w:val="${align}"/>`);
+      if (opt.avecSuivant) props.push('<w:keepNext/><w:keepLines/>');
       props.push(`<w:spacing w:before="${opt.avant || 0}" w:after="${opt.apres == null ? 100 : opt.apres}"/>`);
       if (opt.encadre) {
         props.push('<w:pBdr><w:top w:val="single" w:sz="6" w:color="BFD0E8"/><w:left w:val="single" w:sz="12" w:color="0B3D91"/>' +
@@ -233,19 +238,26 @@
         }).join('') + '</w:tblGrid>';
       }
       lignes.forEach(function (ligne, iL) {
-        xml += '<w:tr>';
+        // une ligne n'est jamais coupée entre deux pages (photo et sa légende restent ensemble)
+        xml += '<w:tr><w:trPr><w:cantSplit/></w:trPr>';
         (Array.isArray(ligne) ? ligne : [ligne]).forEach(function (cellule, iC) {
           const c = (cellule && (cellule.texte !== undefined || cellule.image !== undefined)) ? cellule : { texte: cellule };
           let contenu = '';
           if (c.image) {
             try {
               const im = self.ajouterImage(c.image);
+              im.place = true;   // sans cela l'image n'est pas déclarée dans le .docx (case vide)
               const cmW = c.imageCm || 1.5;
               const cmH = cmW * (im.ratio || 1);
               const CM = 360000;
               contenu = `<w:p><w:pPr><w:spacing w:before="20" w:after="20"/>${c.align && c.align !== 'left' ? `<w:jc w:val="${c.align}"/>` : '<w:jc w:val="center"/>'}</w:pPr><w:r>` +
                 self.dessin(im, Math.round(cmW * CM), Math.round(cmH * CM), im.nom, im.idDessin, im.rid) +
                 '</w:r></w:p>';
+              if (c.legende) {
+                contenu += '<w:p><w:pPr><w:spacing w:before="0" w:after="60"/><w:jc w:val="center"/></w:pPr>' +
+                  '<w:r><w:rPr><w:i/><w:color w:val="64748B"/><w:sz w:val="18"/></w:rPr>' +
+                  `<w:t xml:space="preserve">${x(traduire(c.legende, langue))}</w:t></w:r></w:p>`;
+              }
             } catch (_) {}
           }
           if (!contenu) {
@@ -272,7 +284,7 @@
             }).join('');
           }
           const fond = (c.fond || (iL === 0 && opt.enteteFond)) ? `<w:shd w:val="clear" w:fill="${c.fond || opt.enteteFond}"/>` : '';
-          xml += `<w:tc><w:tcPr>${largeurs ? `<w:tcW w:w="${Math.round(largeurs[iC] * 90)}" w:type="dxa"/>` : ''}<w:vAlign w:val="center"/>${fond}</w:tcPr>${contenu}</w:tc>`;
+          xml += `<w:tc><w:tcPr>${largeurs ? `<w:tcW w:w="${Math.round(largeurs[iC] * 90)}" w:type="dxa"/>` : ''}<w:vAlign w:val="${c.vAlign || 'center'}"/>${fond}</w:tcPr>${contenu}</w:tc>`;
         });
         xml += '</w:tr>';
       });
@@ -511,5 +523,5 @@
     return { w: (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19], h: (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23] };
   }
 
-  global.Docx = { Doc: DocWord, dataUrlToBytes: dataUrlToBytes, crc32: crc32, dimsJpeg: dimsJpeg, dimsPng: dimsPng, utf8: utf8 };
+  global.Docx = { Doc: DocWord, dataUrlToBytes: dataUrlToBytes, crc32: crc32, dimsJpeg: dimsJpeg, dimsPng: dimsPng, utf8: utf8, zip: zip };
 })(window);

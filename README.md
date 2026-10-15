@@ -95,6 +95,13 @@ Déroulé de l'intervention, calqué sur la fiche papier :
 Les catégories pilotent directement la mise en forme du PDF : compteurs par gravité en
 synthèse, sections dédiées par catégorie, bandeau d'alerte en tête de liste dans l'application.
 
+### Dossier photos
+
+Sous **Soumettre le rapport**, le bouton **« Toutes les photos — dossier .zip »** télécharge
+toutes les photos de l'intervention, rangées en `1-Evenements/`, `2-Pieces/` et
+`3-Photos-complementaires/`, avec des noms parlants et un index `Liste-des-photos.csv`
+(ouvrable dans Excel). Pratique pour archiver l'affaire ou transmettre les photos au bureau.
+
 ### Envoi du rapport
 
 Bouton orange **📤 Envoyer** :

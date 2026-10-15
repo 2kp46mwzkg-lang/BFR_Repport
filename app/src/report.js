@@ -332,6 +332,20 @@
      (« 3. Points de priorité haute »…) ; les sections vides n'étant pas imprimées, le
      rapport sautait de « 2. » à « 10. ». Les numéros sont donc recalculés à l'impression,
      dans l'ordre des sections réellement présentes. Un titre sans numéro reste tel quel. */
+  /* Réglage « Mise en page des évènements » : compacte (défaut) ou une page par évènement. */
+  function miseEnPageCompacte(s) {
+    return !(s && s.impression && s.impression.miseEnPageEvenements === 'unParPage');
+  }
+
+  /* Ratio hauteur / largeur d'une photo (JPEG ou PNG en dataURL). */
+  function ratioPhoto(dataUrl) {
+    try {
+      const d = Pdf.jpegDims(Pdf.dataUrlToBytes(dataUrl));
+      if (d && d.w && d.h) return d.h / d.w;
+    } catch (_) {}
+    return 0.75;
+  }
+
   function numeroteurSections() {
     const deja = new Map();
     let n = 0;
@@ -528,7 +542,13 @@
       }
       p.line(this.M, p.y, this.W - this.M, p.y, { color: C.bord });
       p.y += 16;
+      this.yHautPage = p.y;
     }
+
+    /* Bas de la zone imprimable (au-dessus du pied de page). */
+    limiteBas() { return this.pdf.H - this.M - 30; }
+    /* Hauteur disponible sur une page de suite, sous l'en-tête et un bandeau de section. */
+    hauteurUtile() { return this.limiteBas() - (this.yHautPage || 120) - 26; }
 
     /* Page 2 du modèle : destinataire, adresse, lieu et date, attention. */
     pageLettre() {
@@ -716,29 +736,131 @@
       }
     }
 
-    /** Un évènement : bandeau coloré (catégorie + domaine + heure), texte, photos.
-        Règle stricte : 1 seul évènement avec ses photos et commentaires par page. */
-    async blocEvenement(ev, index) {
+    /** Bandeau coloré d'un évènement : [n° k/n] domaine — [machine] · heure · CATÉGORIE. */
+    bandeauEvenement(ev, numero) {
       const { domaines, categories } = this.etat;
       const cat = categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
       const dom = domaines[ev.domaine] || { libelle: '—', icone: '' };
       const p = this.pdf, C = this.C;
       const couleur = hexRgb(cat.couleur);
       const fond = hexClair(cat.couleur, 0.9);
+      p.rect(this.M, p.y, this.CW, 18, { fill: fond, stroke: couleur, lineWidth: 0.5 });
+      p.rect(this.M, p.y, 4, 18, { fill: couleur });
+      const libDom = (numero ? numero + '  ·  ' : '') + this.L(dom.libelle);
+      const libMach = ev.machineNom ? ' — [' + ev.machineNom + ']' : '';
+      p.text(Pdf.trunc(libDom + libMach, this.CW * 0.5, 9.6, true), this.M + 9, p.y + 12.6, { size: 9.6, font: 'F2', color: couleur });
+      p.text(heureFr(ev.heure), this.M + this.CW * 0.62, p.y + 12.6, { size: 8.8, color: C.gris, align: 'center' });
+      p.text(this.L(cat.libelle).toUpperCase(), this.M + this.CW - 9, p.y + 12.6, { size: 9.0, font: 'F2', color: couleur, align: 'right' });
+      p.y += 24;
+    }
+
+    /* ---------- Mise en page compacte des évènements ----------
+       La place d'un évènement dépend de son nombre de photos :
+         0 photo    : bandeau + texte pleine largeur ;
+         1 photo    : texte à gauche, photo à droite ;
+         2 photos   : texte, puis les deux photos côte à côte ;
+         3-4 photos : texte, puis grille de 2 colonnes.
+       Les évènements se suivent sur la page ; un évènement n'est jamais coupé
+       entre deux pages (sauf s'il est plus haut qu'une page entière). */
+    dispositionEvenement(ev) {
+      const lh = 13.6, gap = 10;
+      const sources = (ev.photos || []).filter(ph => ph && ph.dataUrl);
+      const photos = sources.map(ph => {
+        const bytes = Pdf.dataUrlToBytes(ph.dataUrl);
+        const d = Pdf.jpegDims(bytes);
+        return { bytes: bytes, r: (d.w && d.h) ? d.w / d.h : 4 / 3, legende: ph.legende || '' };
+      });
+      const texte = valeur(ev.texte) || '(aucune annotation)';
+      const n = photos.length;
+      const L = { sources: sources, photos: photos, texte: texte, n: n, lh: lh, gap: gap, hBandeau: 24, apres: 16, hLegende: n ? 14 : 0 };
+      if (n === 1) {
+        L.mode = 'cote';
+        L.wPhoto = Math.round(this.CW * 0.44);
+        L.wTexte = this.CW - L.wPhoto - gap;
+        L.lignes = Pdf.wrap(texte, L.wTexte - 18, 10.0);
+        const hNaturelle = (L.wPhoto - 4) / photos[0].r + 4;
+        L.hPhoto = Math.round(Math.max(130, Math.min(215, hNaturelle)));
+        L.hBoite = Math.max(L.lignes.length * lh + 10, L.hPhoto);
+        L.hCorps = Math.max(L.hBoite, L.hPhoto + L.hLegende);
+      } else {
+        L.mode = n === 0 ? 'texte' : 'grille';
+        L.lignes = Pdf.wrap(texte, this.CW - 18, 10.0);
+        L.hBoite = Math.max(L.lignes.length, 1) * lh + 10;
+        L.colW = (this.CW - gap) / 2;
+        L.hCase = n === 2 ? 180 : 150;
+        L.rangs = Math.ceil(n / 2);
+        L.hCorps = L.hBoite + (n ? 10 + L.rangs * (L.hCase + L.hLegende + 6) : 0);
+      }
+      L.hTotal = L.hBandeau + L.hCorps + L.apres;
+      return L;
+    }
+
+    cadrePhoto(ph, x, y, w, h) {
+      const p = this.pdf, C = this.C;
+      p.rect(x, y, w, h, { stroke: C.bord, lineWidth: 0.5 });
+      const rBox = (w - 4) / (h - 4);
+      let iw, ih;
+      if (ph.r >= rBox) { iw = w - 4; ih = iw / ph.r; } else { ih = h - 4; iw = ih * ph.r; }
+      p.image(ph.bytes, x + 2 + (w - 4 - iw) / 2, y + 2 + (h - 4 - ih) / 2, iw, ih);
+      const legende = this.L('Photo') + ' ' + (++this.numeroPhoto) + (ph.legende ? ' — ' + ph.legende : '');
+      p.text(Pdf.trunc(legende, w, 8.4), x + w / 2, y + h + 10, { size: 8.4, color: C.gris, align: 'center' });
+    }
+
+    blocEvenementCompact(ev, numero, L) {
+      const p = this.pdf, C = this.C;
+      this.bandeauEvenement(ev, numero);
+      const y0 = p.y;
+      const largeurTexte = L.mode === 'cote' ? L.wTexte : this.CW;
+      p.rect(this.M, y0, largeurTexte, L.hBoite, { stroke: C.bord, lineWidth: 0.5 });
+      for (let j = 0; j < L.lignes.length; j++) {
+        p.text(L.lignes[j], this.M + 9, y0 + 10.5 + j * L.lh, { size: 10.0, color: C.texte });
+      }
+      if (L.mode === 'cote') {
+        this.cadrePhoto(L.photos[0], this.M + L.wTexte + L.gap, y0, L.wPhoto, L.hPhoto);
+      } else if (L.mode === 'grille') {
+        let y = y0 + L.hBoite + 10;
+        for (let r = 0; r < L.rangs; r++) {
+          for (let c = 0; c < 2; c++) {
+            const k = r * 2 + c;
+            if (k >= L.n) break;
+            // nombre impair : la dernière photo est centrée sous les autres
+            const seule = (k === L.n - 1) && (L.n % 2 === 1);
+            const x = seule ? this.M + (this.CW - L.colW) / 2 : this.M + c * (L.colW + L.gap);
+            this.cadrePhoto(L.photos[k], x, y, L.colW, L.hCase);
+          }
+          y += L.hCase + L.hLegende + 6;
+        }
+      }
+      p.y = y0 + L.hCorps + L.apres;
+    }
+
+    /* Évènement plus haut qu'une page (texte très long) : il commence en haut d'une
+       page, le texte se poursuit sur les pages suivantes, puis les photos. */
+    async blocEvenementLong(ev, numero, L, titreSection) {
+      if (this.pdf.y > (this.yHautPage || 0) + 40) {
+        this.pdf.newPage(); this.enteteSuite();
+        this.titre(titreSection, this.L('suite'));
+      }
+      this.bandeauEvenement(ev, numero);
+      this.blocTexte(null, L.texte);
+      if (L.n) await this.photos(L.sources.map(ph => ({ dataUrl: ph.dataUrl, legende: ph.legende || '' })), true, false);
+      this.pdf.y += 6;
+    }
+
+    /** Un évènement : bandeau coloré (catégorie + domaine + heure), texte, photos.
+        Mise en page « une page par évènement » (réglage). */
+    async blocEvenement(ev, index) {
+      const { domaines, categories } = this.etat;
+      const cat = categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
+      const dom = domaines[ev.domaine] || { libelle: '—', icone: '' };
+      const p = this.pdf, C = this.C;
       const texte = valeur(ev.texte) || '(aucune annotation)';
       const lh = 13.6;
       const lignes = Pdf.wrap(texte, this.CW - 18, 10.0);
       const photosEv = (ev.photos || []).filter(ph => ph.dataUrl);
 
       // 1. Bandeau de domaine / machine / heure / catégorie
-      p.rect(this.M, p.y, this.CW, 18, { fill: fond, stroke: couleur, lineWidth: 0.5 });
-      p.rect(this.M, p.y, 4, 18, { fill: couleur });
-      const libDom = this.L(dom.libelle);
-      const libMach = ev.machineNom ? ' — [' + ev.machineNom + ']' : '';
-      p.text(libDom + libMach, this.M + 9, p.y + 12.6, { size: 9.6, font: 'F2', color: couleur });
-      p.text(heureFr(ev.heure), this.M + this.CW / 2, p.y + 12.6, { size: 8.8, color: C.gris, align: 'center' });
-      p.text(this.L(cat.libelle).toUpperCase(), this.M + this.CW - 9, p.y + 12.6, { size: 9.0, font: 'F2', color: couleur, align: 'right' });
-      p.y += 24;
+      this.bandeauEvenement(ev, '');
 
       // 2. Encadré de texte / commentaire
       const nbLignes = Math.max(lignes.length, 1);
@@ -791,13 +913,15 @@
       const p = this.pdf, C = this.C;
       if (!pcs || !pcs.length) return;
       const avecPhotos = pcs.some(it => it && it.photo);
-      const colPhotoW = avecPhotos ? 44 : 0;
+      /* Photos en grand : vignette de 2,5 cm (72 pt) dans une colonne de 2,9 cm. */
+      const TAILLE_PHOTO = 72;
+      const colPhotoW = avecPhotos ? TAILLE_PHOTO + 10 : 0;
       const remW = this.CW - colPhotoW;
-      const colDenomW = avecPhotos ? Math.round(remW * 0.35) : Math.round(this.CW * 0.36);
+      const colDenomW = avecPhotos ? Math.round(remW * 0.34) : Math.round(this.CW * 0.36);
       const colRefW = avecPhotos ? Math.round(remW * 0.22) : Math.round(this.CW * 0.22);
-      const colMachW = avecPhotos ? Math.round(remW * 0.30) : Math.round(this.CW * 0.28);
+      const colMachW = avecPhotos ? Math.round(remW * 0.31) : Math.round(this.CW * 0.28);
       const colQteW = remW - (colDenomW + colRefW + colMachW);
-      const hLigne = avecPhotos ? 46 : 22;
+      const hLigne = avecPhotos ? TAILLE_PHOTO + 8 : 22;
       const hEntete = 20;
 
       this.saut(hEntete + hLigne * Math.min(pcs.length, 3) + 24);
@@ -842,10 +966,14 @@
         if (avecPhotos) {
           if (item.photo) {
             try {
-              const jp = await toJpeg(item.photo, 400, 0.85);
-              if (jp && jp.bytes) {
+              /* toJpeg() renvoie { dataUrl, w, h } : les octets de l'image sont à
+                 extraire du dataUrl (avant, le code lisait un « jp.bytes » qui n'existe
+                 pas : la photo n'était jamais dessinée et la case affichait « — »). */
+              const jp = await toJpeg(item.photo, 500, 0.85);
+              const octets = (jp && jp.dataUrl) ? Pdf.dataUrlToBytes(jp.dataUrl) : null;
+              if (octets) {
                 const rImg = (jp.w && jp.h) ? (jp.w / jp.h) : 1;
-                const maxBox = 38;
+                const maxBox = TAILLE_PHOTO;
                 let imgW = maxBox, imgH = maxBox;
                 if (rImg >= 1) {
                   imgH = maxBox / rImg;
@@ -854,7 +982,7 @@
                 }
                 const imgX = rowX + (colPhotoW - imgW) / 2;
                 const imgY = y + (hLigne - imgH) / 2;
-                p.image(jp.bytes, imgX, imgY, imgW, imgH);
+                p.image(octets, imgX, imgY, imgW, imgH);
               } else {
                 p.text('—', rowX + colPhotoW / 2, y + hLigne / 2 + 3.5, { size: 9.4, color: C.gris, align: 'center' });
               }
@@ -874,7 +1002,14 @@
         const machInfo = infoMachinePiece(item, this.i);
         const textY = avecPhotos ? (y + hLigne / 2 + 3.5) : (y + 14.5);
 
-        p.text(Pdf.trunc(denom, colDenomW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: C.texte });
+        if (avecPhotos) {
+          // ligne haute : la dénomination peut tenir sur 3 lignes, centrées verticalement
+          const lignesDenom = Pdf.wrap(denom, colDenomW - 14, 9.4).slice(0, 3);
+          const y0 = y + hLigne / 2 + 3.5 - (lignesDenom.length - 1) * 6;
+          lignesDenom.forEach((l, k) => p.text(Pdf.trunc(l, colDenomW - 14, 9.4, false), rowX + 7, y0 + k * 12, { size: 9.4, color: C.texte }));
+        } else {
+          p.text(Pdf.trunc(denom, colDenomW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: C.texte });
+        }
         p.line(rowX + colDenomW, y, rowX + colDenomW, y + hLigne, { color: C.bord, width: 0.4 });
         rowX += colDenomW;
 
@@ -884,9 +1019,10 @@
 
         if (avecPhotos) {
           if (machInfo.serie) {
-            p.text(Pdf.trunc('N° ' + machInfo.serie, colMachW - 14, 9.4, false), rowX + 7, y + 18, { size: 9.4, font: 'F2', color: C.bleu });
+            const yS = machInfo.designation ? y + hLigne / 2 - 2.5 : textY;
+            p.text(Pdf.trunc('N° ' + machInfo.serie, colMachW - 14, 9.4, false), rowX + 7, yS, { size: 9.4, font: 'F2', color: C.bleu });
             if (machInfo.designation) {
-              p.text(Pdf.trunc(machInfo.designation, colMachW - 14, 8.5, false), rowX + 7, y + 31, { size: 8.5, color: C.texte });
+              p.text(Pdf.trunc(machInfo.designation, colMachW - 14, 8.5, false), rowX + 7, yS + 13, { size: 8.5, color: C.texte });
             }
           } else {
             p.text(Pdf.trunc(machInfo.designation || '—', colMachW - 14, 9.4, false), rowX + 7, textY, { size: 9.4, color: machInfo.designation ? C.texte : C.gris });
@@ -1163,11 +1299,29 @@
         } else if (section.type === 'evenements') {
           const evs = evenementsDe(i, section);
           if (!evs.length) continue;
+          if (miseEnPageCompacte(this.s)) {
+            const titreSection = num(section, 'Évènements');
+            const dispos = evs.map(ev => this.dispositionEvenement(ev));
+            const sousTitre = evs.length > 1 ? evs.length + ' ' + this.L('évènements') : null;
+            // le bandeau de section ne reste jamais seul en bas de page
+            this.titre(titreSection, sousTitre, Math.min(dispos[0].hTotal, this.hauteurUtile()));
+            for (let k = 0; k < evs.length; k++) {
+              const L = dispos[k];
+              const numero = evs.length > 1 ? (k + 1) + '/' + evs.length : '';
+              if (L.hTotal > this.hauteurUtile()) { await this.blocEvenementLong(evs[k], numero, L, titreSection); continue; }
+              if (this.pdf.y + L.hTotal > this.limiteBas()) {
+                this.pdf.newPage(); this.enteteSuite();
+                this.titre(titreSection, this.L('suite'));
+              }
+              this.blocEvenementCompact(evs[k], numero, L);
+            }
+            dernierTypeEtaitEvenement = false;
+            continue;
+          }
           let idx = 0;
           for (const ev of evs) {
             idx++;
-            // 1 seul évènement avec photos et commentaires par page.
-            // Interdiction formelle d'avoir un autre évènement sur la même page.
+            // Réglage « une page par évènement » : 1 seul évènement avec ses photos par page.
             this.pdf.newPage();
             this.enteteSuite();
             const sousTitre = evs.length > 1 ? (this.L('Évènement') + ' ' + idx + ' / ' + evs.length) : null;
@@ -1496,11 +1650,58 @@
         } else if (section.type === 'evenements') {
           const evs = evenementsDe(i, section);
           if (!evs.length) continue;
+          if (miseEnPageCompacte(this.s)) {
+            /* Même logique que le PDF : évènements à la suite, mise en page selon le
+               nombre de photos (0 : texte ; 1 : texte | photo ; 2 et plus : grille). */
+            d.bandeau(num(section, 'Évènements') + (evs.length > 1 ? ' — ' + evs.length + ' ' + this.L('évènements') : ''));
+            let k = 0;
+            for (const ev of evs) {
+              k++;
+              const cat = this.etat.categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
+              const dom = this.etat.domaines[ev.domaine] || { libelle: '—' };
+              const morc = [];
+              if (evs.length > 1) morc.push({ t: k + '/' + evs.length + '   ', font: 'Poppins', gras: true, taille: 10.5, couleur: '94A3B8' });
+              morc.push({ t: this.L(dom.libelle), font: 'Poppins', gras: true, taille: 11.5, couleur: '332E72' });
+              if (ev.machineNom) morc.push({ t: '   [' + ev.machineNom + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: '06BAF2' });
+              morc.push(
+                { t: '   [' + this.L(cat.libelle).toUpperCase() + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: hexDocx(cat.couleur) },
+                { t: heureFr(ev.heure) ? '   ' + heureFr(ev.heure) : '', taille: 9.5, couleur: '94A3B8' }
+              );
+              d.para(morc, { avant: 200, apres: 50, avecSuivant: true });
+              const texteEv = valeur(ev.texte) || '(aucune annotation)';
+              const phs = (ev.photos || []).filter(x => x.dataUrl);
+              const legende = (ph) => this.L('Photo') + ' ' + (++this.numeroPhoto) + (ph.legende ? ' — ' + ph.legende : '');
+              if (phs.length === 1) {
+                // texte à gauche, photo à droite (6,8 cm de côté au plus)
+                const r = ratioPhoto(phs[0].dataUrl);
+                const cm = Math.min(6.8, 6.8 / r);
+                d.tableau([
+                  [{ texte: texteEv, taille: 10.5, fond: 'F2F7FD', vAlign: 'top' }, { image: phs[0].dataUrl, imageCm: cm, legende: legende(phs[0]) }]
+                ], { largeurs: [56, 44], sansBordures: true });
+              } else {
+                d.para(texteEv, { taille: 10.5, apres: 80, encadre: true, avecSuivant: phs.length > 0 });
+                if (phs.length) {
+                  // grille de 2 colonnes : 2 photos = 8 × 6 cm, 3-4 photos = 7 × 5 cm
+                  const maxL = phs.length === 2 ? 8 : 7, maxH = phs.length === 2 ? 6 : 5;
+                  const lignesTab = [];
+                  for (let j = 0; j < phs.length; j += 2) {
+                    const lot = phs.slice(j, j + 2);
+                    lignesTab.push(lot.map(ph => {
+                      const r = ratioPhoto(ph.dataUrl);
+                      return { image: ph.dataUrl, imageCm: Math.min(maxL, maxH / r), legende: legende(ph) };
+                    }).concat(lot.length === 1 ? [{ texte: '' }] : []));
+                  }
+                  d.tableau(lignesTab, { largeurs: [50, 50], sansBordures: true });
+                }
+              }
+            }
+            dernierTypeEtaitEvenement = false;
+            continue;
+          }
           let idx = 0;
           for (const ev of evs) {
             idx++;
-            // 1 seul évènement avec photos et commentaires par page.
-            // Interdiction d'avoir le début d'un autre évènement sur la fin de la page précédente.
+            // Réglage « une page par évènement ».
             d.sautDePage();
             const sousTitre = evs.length > 1 ? (' — ' + this.L('Évènement') + ' ' + idx + ' / ' + evs.length) : '';
             d.bandeau((num(section, 'Évènements')) + sousTitre);
@@ -1562,7 +1763,7 @@
             const machInfo = infoMachinePiece(p, i);
             if (avecPhotos) {
               return [
-                p.photo ? { image: p.photo, imageCm: 1.5, align: 'center' } : { texte: '—', align: 'center' },
+                p.photo ? { image: p.photo, imageCm: Math.min(2.6, 2.6 / ratioPhoto(p.photo)), align: 'center' } : { texte: '—', align: 'center' },
                 { texte: p.denomination || p.designation || '—' },
                 { texte: p.reference || '—' },
                 { texte: machInfo.libelle || '—' },
@@ -1576,7 +1777,7 @@
               { texte: String(p.quantite || 1), align: 'center' }
             ];
           });
-          d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [14, 32, 22, 22, 10] : [36, 24, 28, 12] });
+          d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [18, 30, 20, 22, 10] : [36, 24, 28, 12] });
           d.para(this.L('La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.'), { taille: 9.5, couleur: '64748B', apres: 120 });
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'photos') {
@@ -1609,7 +1810,7 @@
                 const machInfo = infoMachinePiece(p, i);
                 if (avecPhotos) {
                   return [
-                    p.photo ? { image: p.photo, imageCm: 1.5, align: 'center' } : { texte: '—', align: 'center' },
+                    p.photo ? { image: p.photo, imageCm: Math.min(2.6, 2.6 / ratioPhoto(p.photo)), align: 'center' } : { texte: '—', align: 'center' },
                     { texte: p.denomination || p.designation || '—' },
                     { texte: p.reference || '—' },
                     { texte: machInfo.libelle || '—' },
@@ -1623,7 +1824,7 @@
                   { texte: String(p.quantite || 1), align: 'center' }
                 ];
               });
-              d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [14, 32, 22, 22, 10] : [36, 24, 28, 12] });
+              d.tableau([enteteTab].concat(lignesTab), { largeurs: avecPhotos ? [18, 30, 20, 22, 10] : [36, 24, 28, 12] });
               d.para(this.L('La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.'), { taille: 9.5, couleur: '64748B', apres: 120 });
               piecesRendues = true;
               dernierTypeEtaitEvenement = false;
