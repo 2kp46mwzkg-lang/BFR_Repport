@@ -70,9 +70,11 @@ bouton 💾 / l'export JSON du menu ☰). **L'installation PWA via GitHub Pages 
 Le choix remplit d'un coup le nom, l'adresse, la ville, le contact (nom seul), la fonction et
 le téléphone du client. Ce qui manque à la liste (téléphone, e-mail, logo, contact) se saisit
 à la main : c'est **mémorisé dans le téléphone** et reproposé aux interventions suivantes.
-La liste se met à jour depuis ☰ → Réglages → *Liste clients* : le classeur « COORDONNÉES CLIENTS »
-s'importe **tel quel en .xlsx** (Excel ou Google Sheets, logos et rubrique *Techniciens* compris),
-ou en CSV / JSON. Elle reste disponible hors connexion.
+La liste se met à jour depuis ☰ → Réglages → *Liste clients* : le classeur des clients s'importe
+**tel quel en .xlsx** (Excel ou Google Sheets), ou en CSV / JSON. Les colonnes sont reconnues par
+leur titre : une ligne par contact (*Client, Titre, Nom, Prénom, Fonction, Téléphone, Mobile,
+Email*) ou l'ancienne présentation (*Client, Adresse, Contact, Logo*, rubrique *Techniciens*).
+Quand un client a plusieurs contacts, tous sont proposés. La liste reste disponible hors connexion.
 
 **Avant la première intervention** : ☰ → **Mes informations** (la fiche s'ouvre toute seule
 au premier lancement). On y saisit **Prénom, Nom, Téléphone, E-mail**, la fonction et — si

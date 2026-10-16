@@ -1,3 +1,24 @@
+# Nouvelle présentation du classeur clients — 15/10/2026
+
+- Le classeur avec **une ligne par contact** s'importe : colonnes **Client, Titre, Nom,
+  Prénom, Fonction, Téléphone, Mobile, Email** (dans n'importe quel ordre, reconnues par leur
+  titre ; Adresse, Code postal, Ville, Pays et Logo sont aussi lus s'ils existent).
+  - Contact = « Titre Prénom Nom » (« M. Paul MARTIN ») : le rapport écrit donc
+    « À l'attention de M. Paul MARTIN ».
+  - Téléphone du contact = le **mobile** s'il existe (pour le SMS d'arrivée sur site), sinon
+    le fixe ; le fixe est gardé dans « autres contacts ».
+  - Numéros remis en forme (« 06 12 34 56 78 »), y compris un mobile saisi comme un nombre
+    dans Excel (le 0 perdu est rétabli).
+  - Cellule « Client » fusionnée sur plusieurs contacts : chaque contact est rattaché au bon client.
+  - E-mail du contact repris dans la fiche (et dans le rapport).
+- Ce classeur n'ayant pas d'adresses ni de logos, ceux de la **liste déjà chargée** sont
+  repris pour les clients qui y figuraient.
+- Plusieurs contacts pour un même client : **tous restent proposés** quand on tape le nom du
+  client (avec leur fonction), même après en avoir choisi un. Avant, le contact choisi une
+  fois remplaçait les autres dans les propositions.
+- Recherche aussi par le prénom ou le nom du contact (« sophie » trouve « Mme Sophie LEROY »).
+- L'ancienne présentation (Client, Adresse, Contact, Logo) reste acceptée.
+
 # Listes de propositions — 15/10/2026
 
 - Les propositions des champs **Collègue sur site**, **Machine / équipement** et **Lieu

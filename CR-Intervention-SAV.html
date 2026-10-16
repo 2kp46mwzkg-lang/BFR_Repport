@@ -9645,23 +9645,46 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       try { return JSON.parse(global.localStorage.getItem(CLE_MEMO) || '{}') || {}; } catch (e) { return {}; }
     },
     /* Liste de référence + tout ce que les techniciens ont saisi en plus.
-       Les données locales complètent la liste (et non l'inverse). */
+       Le classeur peut avoir une ligne par contact (plusieurs lignes par client) :
+       - ce qui concerne le CLIENT (adresse, lieu, logo, n° client, langue) et a été
+         saisi sur le terrain s'applique à toutes ses lignes ;
+       - ce qui concerne un CONTACT (nom, fonction, téléphone, e-mail) ne corrige que
+         la ligne de ce contact ; un contact saisi sur le terrain et absent du
+         classeur est proposé EN PLUS, sans masquer les autres. */
     liste: function () {
       const memo = this.memo();
-      const vus = {};
+      const CHAMPS_CLIENT = ['adresse', 'ville', 'logo', 'numeroClient', 'langue'];
+      const CHAMPS_CONTACT = ['contact', 'fonction', 'tel', 'email'];
+      const contactsVus = {};
       const out = [];
       this.base().forEach(c => {
         const cle = norm(c.nom);
-        const dejaVu = vus[cle] || 0;
-        vus[cle] = dejaVu + 1;
-        out.push(Object.assign({}, c, memo[cle] || {}));
+        const m = memo[cle];
+        const fiche = Object.assign({}, c);
+        if (m) {
+          CHAMPS_CLIENT.forEach(ch => { if (m[ch]) fiche[ch] = m[ch]; });
+          const memeContact = !!m.contact && norm(m.contact) === norm(c.contact);
+          CHAMPS_CONTACT.forEach(ch => { if (m[ch] && (memeContact || (!c.contact && !fiche[ch]))) fiche[ch] = m[ch]; });
+        }
+        (contactsVus[cle] = contactsVus[cle] || {})[norm(fiche.contact)] = fiche;
+        out.push(fiche);
       });
-      /* Clients saisis sur le terrain et absents du classeur : on les garde. */
       Object.keys(memo).forEach(k => {
         const m = memo[k];
-        if (!m || !m.nom || vus[k]) return;
-        if (Clients.base().some(c => norm(c.nom) === k)) return;
-        vus[k] = 1;
+        if (!m || !m.nom) return;
+        if (contactsVus[k]) {
+          /* Client du classeur, contact saisi sur le terrain qui n'y figure pas. */
+          if (m.contact && !contactsVus[k][norm(m.contact)]) {
+            const modele = out.find(c => norm(c.nom) === k) || {};
+            const fiche = Object.assign({}, modele, { contact: m.contact, fonction: m.fonction || '',
+              tel: m.tel || '', email: m.email || '', autresContacts: '' });
+            contactsVus[k][norm(m.contact)] = fiche;
+            out.push(fiche);
+          }
+          return;
+        }
+        /* Clients saisis sur le terrain et absents du classeur : on les garde. */
+        contactsVus[k] = {};
         out.push(Object.assign({ contact: '', fonction: '', tel: '', adresse: '', ville: '', logo: '' }, m));
       });
       return out;
@@ -9685,7 +9708,8 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         else if (motsNom.some(m => m.indexOf(q) === 0)) score = 1;          // un mot commence par
         else if (large && n.indexOf(q) > 0) score = 2;                      // contient le nom
         else if (large && norm(c.ville).indexOf(q) === 0) score = 3;        // ville
-        else if (large && norm(c.contact).indexOf(q) === 0) score = 4;      // contact
+        else if (large && (norm(c.contact).indexOf(q) === 0 ||              // contact (nom ou prénom,
+                 String(c.contact || '').split(/[\s.]+/).some(m => norm(m).length > 1 && norm(m).indexOf(q) === 0))) score = 4;  // même après « M. »)
         if (score >= 0) trouves.push({ score: score, c: c });
       });
       trouves.sort((a, b) => a.score - b.score || norm(a.c.nom).length - norm(b.c.nom).length ||
@@ -9782,58 +9806,132 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       return this.depuisLignes(this.decouperCSV(texte));
     },
     /* Lignes du classeur (CSV ou feuille .xlsx) → fiches clients.
-       Colonnes du classeur « COORDONNÉES CLIENTS » : Client | Adresse | Contact | Logo.
-       Si une ligne d'en-tête est trouvée, les colonnes sont reconnues par leur titre
-       (l'ordre peut donc changer). logos : { n° de ligne : image } pour un .xlsx. */
+       Deux présentations du classeur sont reconnues, d'après la ligne d'en-tête :
+       - une ligne par CONTACT : Client | Titre | Nom | Prénom | Fonction | Téléphone |
+         Mobile | Email (+ Adresse, Code postal, Ville, Pays, Logo s'il y en a) ;
+       - l'ancienne, une ligne par client : Client | Adresse | Contact | Logo.
+       Les colonnes sont trouvées par leur titre, dans n'importe quel ordre ; sans
+       en-tête, l'ancien ordre est supposé. logos : { n° de ligne : image } (.xlsx). */
     depuisLignes: function (lignes, logos) {
       logos = logos || {};
+      const TITRES = {
+        nom: ['CLIENT', 'CLIENTS', 'NOMDUCLIENT', 'SOCIETE', 'RAISONSOCIALE', 'ENTREPRISE'],
+        adresse: ['ADRESSE', 'ADRESSE1', 'ADRESSEPOSTALE', 'RUE'],
+        adresse2: ['ADRESSE2', 'COMPLEMENT', 'COMPLEMENTDADRESSE'],
+        cp: ['CODEPOSTAL', 'CP'],
+        villeCol: ['VILLE', 'COMMUNE', 'LOCALITE'],
+        pays: ['PAYS'],
+        contact: ['CONTACT', 'CONTACTS', 'INTERLOCUTEUR'],
+        titre: ['TITRE', 'CIVILITE'],
+        nomContact: ['NOM', 'NOMDUCONTACT'],
+        prenom: ['PRENOM'],
+        fonction: ['FONCTION', 'POSTE'],
+        telephone: ['TELEPHONE', 'TEL', 'TELFIXE', 'TELEPHONEFIXE', 'FIXE', 'STANDARD', 'NUMERODETELEPHONE'],
+        mobile: ['MOBILE', 'PORTABLE', 'GSM', 'TELPORTABLE', 'TELMOBILE', 'TELEPHONEMOBILE', 'TELEPHONEPORTABLE'],
+        email: ['EMAIL', 'MAIL', 'COURRIEL', 'ADRESSEMAIL', 'ADRESSEEMAIL'],
+        logo: ['LOGO']
+      };
+      // ancienne présentation sans en-tête : Client | Adresse | Contact | Logo
       let col = { nom: 0, adresse: 1, contact: 2, logo: 3 };
+      let ligneEnTete = -1;
       for (let k = 0; k < Math.min(lignes.length, 10); k++) {
         const titres = (lignes[k] || []).map(x => norm(x));
-        const trouve = (mots) => titres.findIndex(t => mots.some(m => t === m || t.indexOf(m) === 0));
-        const iNom = trouve(['CLIENT', 'NOMDUCLIENT', 'SOCIETE', 'RAISONSOCIALE']);
-        const iAdr = trouve(['ADRESSE']);
-        if (iNom >= 0 && iAdr >= 0) {
-          const iCont = trouve(['CONTACT']), iLogo = trouve(['LOGO']);
-          col = { nom: iNom, adresse: iAdr, contact: iCont, logo: iLogo };
-          break;
-        }
+        const trouve = {};
+        Object.keys(TITRES).forEach(cle => { trouve[cle] = titres.findIndex(t => TITRES[cle].indexOf(t) >= 0); });
+        const reconnues = Object.keys(trouve).filter(cle => trouve[cle] >= 0).length;
+        if (trouve.nom >= 0 && reconnues >= 2) { col = trouve; ligneEnTete = k; break; }
       }
-      const prendre = (cols, i) => (i >= 0 ? String(cols[i] == null ? '' : cols[i]) : '');
+      const prendre = (cols, i) => (i >= 0 && i !== undefined ? String(cols[i] == null ? '' : cols[i]).trim() : '');
+      const val = (cols, cle) => prendre(cols, col[cle]);
+      const parContact = ligneEnTete >= 0 && (col.nomContact >= 0 || col.prenom >= 0 || col.email >= 0 || col.mobile >= 0);
       const out = [];
       /* Rubrique « Techniciens » du classeur : les noms qui suivent (une ligne chacun,
          sans adresse) alimentent la liste des collègues proposés sur le terrain. */
       const techniciens = [];
-      let dansTechniciens = false, lignePrec = 0;
+      let dansTechniciens = false, lignePrec = 0, clientCourant = '';
       lignes.forEach((cols, k) => {
         cols = cols || [];
+        if (k === ligneEnTete) return;
         const numLigne = cols.ligne || (k + 1);
         const sauteLigne = numLigne !== lignePrec + 1;
         lignePrec = numLigne;
-        const brut = prendre(cols, col.nom).trim();
+        let brut = val(cols, 'nom');
         const vide = !cols.some(x => String(x == null ? '' : x).trim());
         if (dansTechniciens) {
-          if (vide || sauteLigne || !/[A-Za-zÀ-ÿ]/.test(brut) ||
-              prendre(cols, col.adresse).trim() || prendre(cols, col.contact).trim()) dansTechniciens = false;
+          if (vide || sauteLigne || !/[A-Za-zÀ-ÿ]/.test(brut) || val(cols, 'adresse') || val(cols, 'contact') ||
+              val(cols, 'email') || val(cols, 'mobile')) dansTechniciens = false;
           else { techniciens.push({ nom: joli(brut) }); return; }
         }
         if (/^techniciens?$/i.test(brut)) { dansTechniciens = true; return; }
+
+        // adresse : une colonne « Adresse » (sur plusieurs lignes) ou rue / CP / ville / pays
+        const lignesAdr = val(cols, 'adresse').replace(/\r/g, '').split('\n').map(x => x.trim()).filter(Boolean);
+        if (val(cols, 'adresse2')) lignesAdr.push(val(cols, 'adresse2'));
+        const cpVille = [val(cols, 'cp'), val(cols, 'villeCol')].filter(Boolean).join(' ');
+        if (cpVille && lignesAdr.join(' ').indexOf(cpVille) < 0) lignesAdr.push(cpVille);
+        if (val(cols, 'pays') && lignesAdr.join(' ').toUpperCase().indexOf(val(cols, 'pays').toUpperCase()) < 0) lignesAdr.push(val(cols, 'pays'));
+        const adresse = lignesAdr.join('\n');
+
+        // contact : colonnes Titre / Prénom / Nom…, ou l'ancienne colonne « Contact » en texte libre
+        const pc = this.decouperContact(val(cols, 'contact'));
+        const nomPersonne = [val(cols, 'titre'), val(cols, 'prenom'), val(cols, 'nomContact')].filter(Boolean).join(' ');
+        const fixe = this.telephone(val(cols, 'telephone')), mobile = this.telephone(val(cols, 'mobile'));
+        const tel = mobile || fixe || pc.tel;            // le mobile d'abord (SMS d'arrivée sur site)
+        const autres = [mobile && fixe ? 'Tél. ' + fixe : '', pc.autres].filter(Boolean).join(' / ');
+        const email = val(cols, 'email');
+        const fonction = val(cols, 'fonction') || pc.fonction;
+        const contact = nomPersonne || pc.contact;
+
+        const image = logos[numLigne] || '';
+        const logo = image || val(cols, 'logo');
+        const aDesInfos = !!(adresse || contact || fonction || tel || email || logo);
+        // cellules « Client » fusionnées sur plusieurs contacts : le nom n'est que sur la 1re ligne
+        if (!brut && parContact && aDesInfos && clientCourant && !sauteLigne) brut = clientCourant;
         const nom = joli(brut);
-        const adresse = prendre(cols, col.adresse).replace(/\r/g, '').split('\n').map(x => x.trim()).join('\n').trim();
-        const contactBrut = prendre(cols, col.contact).trim();
-        const image = logos[cols.ligne || (k + 1)] || '';
-        const logo = image || prendre(cols, col.logo).trim();
-        if (!nom || /^client$/i.test(nom) || /^coordonn/i.test(nom) || /^technicien/i.test(nom)) return;
-        if (!adresse && !contactBrut && !logo) return;
-        const pc = this.decouperContact(contactBrut);
+        if (!nom || /^clients?$/i.test(nom) || /^coordonn/i.test(nom) || /^technicien/i.test(nom)) { clientCourant = ''; return; }
+        clientCourant = brut;
+        if (!aDesInfos) return;
         out.push({
-          nom: nom, reference: prendre(cols, col.nom).trim(), adresse: adresse,
-          ville: this.ville(adresse), contact: pc.contact, fonction: pc.fonction,
-          tel: pc.tel, autresContacts: pc.autres, logo: logo
+          nom: nom, reference: brut, adresse: adresse,
+          ville: val(cols, 'villeCol') || this.ville(adresse), contact: contact, fonction: fonction,
+          tel: tel, email: email, autresContacts: autres, logo: logo
         });
       });
       out.techniciens = techniciens;
+      out.presentation = parContact ? 'contacts' : 'clients';
       return out;
+    },
+    /* Numéro lu dans un classeur : un numéro saisi comme un nombre perd son 0
+       (« 612345678 ») ; on le rétablit et on l'écrit par paires (06 12 34 56 78). */
+    telephone: function (brut) {
+      let t = String(brut == null ? '' : brut).trim();
+      if (!t) return '';
+      if (/^\d+(\.0+)?$/.test(t)) t = t.replace(/\.0+$/, '');      // nombre Excel (« 612345678.0 »)
+      if (/^[1-9]\d{8}$/.test(t)) t = '0' + t;                        // 0 perdu par Excel
+      const compact = t.replace(/[\s.\-/]/g, '');
+      if (/^0\d{9}$/.test(compact)) return compact.replace(/(\d{2})(?=\d)/g, '$1 ');
+      if (/^33\d{9}$/.test(compact)) return '+33 ' + compact.slice(2).replace(/^(\d)(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1 $2 $3 $4 $5');
+      return t;
+    },
+    /* Un classeur sans adresses ni logos (présentation par contact) ne doit pas faire
+       perdre ceux de la liste déjà chargée : ils sont repris pour le même client. */
+    completerDepuis: function (lignes, ancienne) {
+      const parNom = {};
+      (ancienne || []).forEach(c => {
+        const k = norm(c && c.nom);
+        if (!k) return;
+        const p = parNom[k] || (parNom[k] = {});
+        ['adresse', 'ville', 'logo'].forEach(ch => { if (!p[ch] && c[ch]) p[ch] = c[ch]; });
+      });
+      let n = 0;
+      lignes.forEach(c => {
+        const p = parNom[norm(c.nom)];
+        if (!p) return;
+        let complete = false;
+        ['adresse', 'ville', 'logo'].forEach(ch => { if (!c[ch] && p[ch]) { c[ch] = p[ch]; complete = true; } });
+        if (complete) n++;
+      });
+      return n;
     },
     /* Import d'un fichier choisi sur le téléphone ou l'ordinateur, quel que soit son
        format : classeur Excel (.xlsx, y compris l'export de Google Sheets), CSV
@@ -9849,19 +9947,23 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
         try { classeur = await Classeur.lire(b); }
         catch (e) { return { n: 0, erreur: 'Classeur illisible : ' + ((e && e.message) || e) }; }
         lignes = this.depuisLignes(classeur.lignes, classeur.logos);
-        if (!lignes.length) return { n: 0, erreur: 'Aucun client trouvé dans le classeur (colonnes attendues : Client, Adresse, Contact, Logo)' };
+        if (!lignes.length) return { n: 0, erreur: 'Aucun client trouvé dans le classeur (colonnes attendues : Client, puis Titre, Nom, Prénom, Fonction, Téléphone, Mobile, Email — ou Adresse, Contact)' };
       } else if (b[0] === 0xD0 && b[1] === 0xCF && b[2] === 0x11 && b[3] === 0xE0) {
         return { n: 0, erreur: 'Ancien format Excel (.xls) : enregistrez le classeur au format .xlsx ou CSV' };
       } else {
         let texte;
         try { texte = new TextDecoder('utf-8', { fatal: true }).decode(b); }
         catch (e) { texte = new TextDecoder('windows-1252').decode(b); }   // CSV enregistré par Excel sous Windows
-        lignes = this.analyser(texte.replace(/^﻿/, ''));
+        lignes = this.analyser(texte.replace(/^\uFEFF/, ''));
         if (!lignes.length) return { n: 0, erreur: 'Fichier illisible : attendu le classeur Excel (.xlsx), un CSV ou un JSON' };
       }
+      // adresses et logos de la liste déjà chargée, pour les clients du nouveau fichier qui n'en ont pas
+      const completes = this.completerDepuis(lignes, this.base());
+      const nbClients = new Set(lignes.map(c => norm(c.nom))).size;
       const n = this.importer(lignes);
       if (!n) return { n: 0, erreur: 'Liste trop lourde pour la mémoire du téléphone' };
-      return { n: n, logos: lignes.filter(c => /^data:image\//.test(c.logo || '')).length,
+      return { n: n, clients: nbClients, contacts: lignes.presentation === 'contacts' ? n : 0, completes: completes,
+        logos: lignes.filter(c => /^data:image\//.test(c.logo || '')).length,
         techniciens: (lignes.techniciens || []).length };
     },
     decouperCSV: function (texte) {
@@ -12402,12 +12504,12 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
       function afficherSuggestions() {
         const q = champ.value.trim();
         if (q.length < 3) { fermerSuggestions(); return; }
-        propositions = Clients.chercher(q, 8);
+        propositions = Clients.chercher(q, 12);   // plusieurs contacts par client possibles
         if (!propositions.length) { fermerSuggestions(); return; }
         boite.hidden = false;
         boite.innerHTML = propositions.map((c, i) => `<button type="button" class="suggestion" data-i="${i}">
             <span class="sug-nom">${esc(c.nom)}</span>
-            <span class="sug-detail">${esc([c.ville, c.contact, c.tel].filter(Boolean).join(' · ')) || '—'}</span>
+            <span class="sug-detail">${esc([c.ville, c.contact ? c.contact + (c.fonction ? ' (' + c.fonction + ')' : '') : '', c.tel].filter(Boolean).join(' · ')) || '—'}</span>
           </button>`).join('');
       }
 
@@ -13775,8 +13877,10 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
           catch (e) { res = { n: 0, erreur: 'Lecture impossible : ' + ((e && e.message) || e) }; }
           champ.value = '';
           if (!res.n) { toast(res.erreur || 'Fichier illisible', 5000); return; }
-          toast(res.n + ' client(s) chargé(s)' + (res.logos ? ', ' + res.logos + ' logo(s)' : '') +
-            (res.techniciens ? ', ' + res.techniciens + ' technicien(s)' : '') + ' — disponible hors connexion', 4000);
+          toast((res.contacts ? res.contacts + ' contact(s) pour ' + res.clients + ' client(s)' : res.n + ' client(s)') + ' chargé(s)' +
+            (res.completes ? ', adresse ou logo repris de l\'ancienne liste pour ' + res.completes : '') +
+            (res.logos ? ', ' + res.logos + ' logo(s)' : '') +
+            (res.techniciens ? ', ' + res.techniciens + ' technicien(s)' : '') + ' — disponible hors connexion', 5000);
           const feuille = champ.closest('.sheet');
           if (feuille) feuille.remove();
           feuilleReglages();
@@ -15494,5 +15598,5 @@ window.LOGO_BFR_TOPBAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAw
   };
 })();
 </script>
-<script>window.SAV_VERSION="341c883b9e";window.SAV_DATE="15/10/2026";</script></body>
+<script>window.SAV_VERSION="539bd59135";window.SAV_DATE="15/10/2026";</script></body>
 </html>

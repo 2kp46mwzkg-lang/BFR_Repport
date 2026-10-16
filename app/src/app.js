@@ -2209,12 +2209,12 @@
       function afficherSuggestions() {
         const q = champ.value.trim();
         if (q.length < 3) { fermerSuggestions(); return; }
-        propositions = Clients.chercher(q, 8);
+        propositions = Clients.chercher(q, 12);   // plusieurs contacts par client possibles
         if (!propositions.length) { fermerSuggestions(); return; }
         boite.hidden = false;
         boite.innerHTML = propositions.map((c, i) => `<button type="button" class="suggestion" data-i="${i}">
             <span class="sug-nom">${esc(c.nom)}</span>
-            <span class="sug-detail">${esc([c.ville, c.contact, c.tel].filter(Boolean).join(' · ')) || '—'}</span>
+            <span class="sug-detail">${esc([c.ville, c.contact ? c.contact + (c.fonction ? ' (' + c.fonction + ')' : '') : '', c.tel].filter(Boolean).join(' · ')) || '—'}</span>
           </button>`).join('');
       }
 
@@ -3582,8 +3582,10 @@
           catch (e) { res = { n: 0, erreur: 'Lecture impossible : ' + ((e && e.message) || e) }; }
           champ.value = '';
           if (!res.n) { toast(res.erreur || 'Fichier illisible', 5000); return; }
-          toast(res.n + ' client(s) chargé(s)' + (res.logos ? ', ' + res.logos + ' logo(s)' : '') +
-            (res.techniciens ? ', ' + res.techniciens + ' technicien(s)' : '') + ' — disponible hors connexion', 4000);
+          toast((res.contacts ? res.contacts + ' contact(s) pour ' + res.clients + ' client(s)' : res.n + ' client(s)') + ' chargé(s)' +
+            (res.completes ? ', adresse ou logo repris de l\'ancienne liste pour ' + res.completes : '') +
+            (res.logos ? ', ' + res.logos + ' logo(s)' : '') +
+            (res.techniciens ? ', ' + res.techniciens + ' technicien(s)' : '') + ' — disponible hors connexion', 5000);
           const feuille = champ.closest('.sheet');
           if (feuille) feuille.remove();
           feuilleReglages();

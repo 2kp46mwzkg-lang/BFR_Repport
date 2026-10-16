@@ -2,9 +2,13 @@
 
     python tests/donnees/fabriquer_exemples.py
 
-Produit clients-exemple.xlsx (avec un logo dans la colonne Logo et une rubrique
-« Techniciens ») et clients-exemple-excel.csv (CSV « ; » en encodage Windows,
-comme l'enregistre Excel en français). Les fichiers produits sont versionnés :
+Produit :
+- clients-exemple.xlsx : ancienne présentation (Client | Adresse | Contact | Logo),
+  avec un logo et une rubrique « Techniciens » ;
+- clients-contacts-exemple.xlsx : présentation actuelle, une ligne par contact
+  (Client | Titre | Nom | Prénom | Fonction | Téléphone | Mobile | Email), avec une
+  cellule Client fusionnée sur deux contacts et un mobile saisi comme un nombre ;
+- clients-exemple-excel.csv : CSV « ; » en encodage Windows, comme l'enregistre Excel. Les fichiers produits sont versionnés :
 les tests n'ont pas besoin d'openpyxl ni de Pillow.
 """
 import io
@@ -57,6 +61,23 @@ def xlsx():
     wb.save(os.path.join(ICI, 'clients-exemple.xlsx'))
 
 
+def xlsx_contacts():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Contacts'
+    ws.append(['COORDONNÉES CLIENTS'])
+    ws.append(['Client', 'Titre', 'Nom', 'Prénom', 'Fonction', 'Téléphone', 'Mobile', 'Email'])
+    ws.append(['FROMAGERIE_DU_JURA', 'M.', 'MARTIN', 'Paul', 'Responsable maintenance',
+               '03 84 00 00 00', 612345678, 'paul.martin@exemple.fr'])     # mobile saisi comme un nombre
+    ws.append([None, 'Mme', 'LEROY', 'Sophie', 'Responsable production',
+               None, '06.98.76.54.32', 's.leroy@exemple.fr'])
+    ws.merge_cells('A3:A4')                                                  # même client, deux contacts
+    ws.append(['LAITERIE_DES_ALPES', 'Mme', 'BERNARD', 'Julie', 'Directrice technique',
+               '04 50 00 00 00', None, 'j.bernard@exemple.fr'])
+    ws.append(['NOUVEAU_CLIENT_SA', 'M.', 'PETIT', 'Luc', 'Acheteur', None, '0611223344', 'luc.petit@exemple.fr'])
+    wb.save(os.path.join(ICI, 'clients-contacts-exemple.xlsx'))
+
+
 def csv_excel():
     lignes = ['COORDONNÉES CLIENTS;;;', 'Client;Adresse;Contact;Logo']
     for nom, adr, contact in CLIENTS:
@@ -67,5 +88,6 @@ def csv_excel():
 
 if __name__ == '__main__':
     xlsx()
+    xlsx_contacts()
     csv_excel()
     print('fichiers d\'exemple écrits dans', ICI)

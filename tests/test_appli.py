@@ -655,6 +655,45 @@ async def test_import_clients(nav, adresse):
       try { return await Clients.importerFichier(u.buffer); } finally { window.DecompressionStream = sauve; }
     }''', b64)
     verifier(res.get('n') == 4 and res.get('logos') == 1, 'lecture sans DecompressionStream : %s' % res)
+    # 2 bis. nouvelle présentation du classeur : une ligne par contact
+    await t.menu('reglages')
+    await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-contacts-exemple.xlsx'))
+    await pg.wait_for_timeout(1500)
+    liste = await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]")')
+    vus = [(c['nom'], c['contact']) for c in liste]
+    verifier(vus == [('FROMAGERIE DU JURA', 'M. Paul MARTIN'), ('FROMAGERIE DU JURA', 'Mme Sophie LEROY'),
+                     ('LAITERIE DES ALPES', 'Mme Julie BERNARD'), ('NOUVEAU CLIENT SA', 'M. Luc PETIT')],
+             'contacts du classeur mal lus : %s' % vus)
+    paul, sophie = liste[0], liste[1]
+    verifier((paul['fonction'], paul['tel'], paul['email'], paul['autresContacts']) ==
+             ('Responsable maintenance', '06 12 34 56 78', 'paul.martin@exemple.fr', 'Tél. 03 84 00 00 00'),
+             'fiche contact mal remplie : %s' % paul)
+    verifier(sophie['tel'] == '06 98 76 54 32', 'mobile mal formaté : %r' % sophie['tel'])
+    # adresse et logo de l'ancienne liste repris pour un client déjà connu
+    verifier(paul['adresse'].startswith('12 rue des Sapins') and paul['logo'].startswith('data:image/png'),
+             'adresse/logo de l\'ancienne liste non repris : %r' % paul['adresse'])
+    verifier(liste[3]['adresse'] == '', 'un nouveau client ne doit pas recevoir d\'adresse inventée')
+    # les deux contacts d'un même client restent proposés, même après en avoir choisi un
+    await t.fermer_feuilles()
+    for passage in range(2):
+        await pg.click('[data-a="editer-client"] >> nth=0')
+        await pg.wait_for_timeout(400)
+        await pg.fill('#cliRecherche', 'fro')
+        await pg.wait_for_timeout(400)
+        details = await pg.eval_on_selector_all('#cliSug .sug-detail', 'els => els.map(e => e.textContent)')
+        verifier(len(details) == 2 and any('Paul MARTIN' in d for d in details) and any('Sophie LEROY' in d for d in details),
+                 'passage %d : les deux contacts doivent être proposés : %s' % (passage, details))
+        if passage == 0:
+            await pg.click('#cliSug .suggestion >> nth=1')            # Mme Sophie LEROY
+            await pg.wait_for_timeout(300)
+            verifier(await pg.input_value('.sheet.open [data-fk="client.contact"]') == 'Mme Sophie LEROY',
+                     'contact choisi non repris dans la fiche')
+            await pg.click('.sheet.open [data-a="ok"]')
+            await pg.wait_for_timeout(600)
+        await t.fermer_feuilles()
+    # recherche par le prénom du contact (après « Mme »)
+    trouves = await pg.evaluate('() => Clients.chercher("sophie").map(c => c.contact)')
+    verifier(trouves == ['Mme Sophie LEROY'], 'recherche par prénom du contact : %s' % trouves)
     # 3. CSV enregistré par Excel (séparateur « ; », encodage Windows)
     await t.menu('reglages')
     await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-exemple-excel.csv'))

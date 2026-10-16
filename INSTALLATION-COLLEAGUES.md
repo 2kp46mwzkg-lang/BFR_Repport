@@ -43,8 +43,10 @@ La liste des clients n'est **pas** dans l'application publiée : chacun la charg
 téléphone. Elle reste ensuite dans le téléphone et s'utilise **hors connexion**.
 
 1. Récupérer le fichier de la liste, fourni par le responsable SAV :
-   - le classeur « COORDONNÉES CLIENTS » lui-même (`.xlsx`, Excel ou téléchargé depuis
-     Google Sheets : Fichier → Télécharger → Microsoft Excel), logos et techniciens compris ;
+   - le classeur des clients lui-même (`.xlsx`, Excel ou téléchargé depuis Google Sheets :
+     Fichier → Télécharger → Microsoft Excel). Colonnes reconnues par leur titre : une ligne
+     par contact (Client, Titre, Nom, Prénom, Fonction, Téléphone, Mobile, Email) ou
+     l'ancienne présentation (Client, Adresse, Contact, Logo, rubrique Techniciens) ;
    - ou `clients-bfr-AAAA-MM-JJ.json`, ou un export CSV du classeur.
    On le reçoit par mail, messagerie d'équipe ou Bluetooth.
    *Un collègue qui l'a déjà peut aussi vous l'envoyer : ☰ → Réglages → **Exporter la liste
