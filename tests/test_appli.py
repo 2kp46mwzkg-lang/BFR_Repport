@@ -737,8 +737,165 @@ async def test_import_clients(nav, adresse):
     return t
 
 
+async def test_annuaire(nav, adresse):
+    """Annuaire : recherche sans perdre le clavier, chaque contact modifiable sans écraser les autres."""
+    t = await Telephone(nav, adresse).ouvrir()
+    pg = t.pg
+    await t.identite()
+    await t.menu('reglages')
+    await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-contacts-exemple.xlsx'))
+    await pg.wait_for_timeout(1500)
+    await t.menu('annuaire')
+    # la recherche ne redessine pas le champ (sinon le clavier de l'iPhone se ferme à chaque lettre)
+    await pg.evaluate('() => { window.__champ = document.querySelector("#inputRechercheAnnuaire"); }')
+    await pg.click('#inputRechercheAnnuaire')
+    await pg.keyboard.type('fro')
+    await pg.wait_for_timeout(300)
+    meme = await pg.evaluate('() => window.__champ === document.querySelector("#inputRechercheAnnuaire")')
+    verifier(meme, 'le champ de recherche de l\'annuaire est redessiné à chaque lettre')
+    cartes = await pg.eval_on_selector_all('#listeCartesClients .card', 'els => els.map(e => e.textContent)')
+    verifier(len(cartes) == 2, 'recherche « fro » : 2 contacts attendus, %d cartes' % len(cartes))
+
+    async def ouvrir(contact):
+        idx = await pg.evaluate('''(nom) => [...document.querySelectorAll("#listeCartesClients .card")]
+          .findIndex(e => e.textContent.indexOf(nom) >= 0)''', contact)
+        verifier(idx >= 0, 'carte de %s introuvable' % contact)
+        await pg.click('#listeCartesClients .card >> nth=%d' % idx)
+        await pg.wait_for_timeout(300)
+        verifier(await pg.input_value('#annContact') == contact,
+                 'la fiche ouverte n\'est pas celle de %s : %r' % (contact, await pg.input_value('#annContact')))
+
+    async def enregistrer():
+        await pg.click('[data-a="enregistrer-client"]')
+        await pg.wait_for_timeout(400)
+
+    def fiches():
+        return pg.evaluate('''() => Clients.liste().filter(c => c.nom === "FROMAGERIE DU JURA")
+          .map(c => ({ contact: c.contact, tel: c.tel, fonction: c.fonction, notes: c.autresContacts || "" }))''')
+
+    # 1. le 2e contact s'ouvre bien (avant : la carte ouvrait toujours le 1er contact du client)
+    await ouvrir('Mme Sophie LEROY')
+    await pg.fill('#annTel', '06 00 00 00 01')
+    await pg.fill('#annNotes', "Badge à demander à l'accueil")
+    await enregistrer()
+    # 2. modifier l'autre contact ne doit pas effacer la modification précédente
+    await pg.fill('#inputRechercheAnnuaire', 'fro')
+    await pg.wait_for_timeout(300)
+    await ouvrir('M. Paul MARTIN')
+    verifier(await pg.input_value('#annNotes') == "Badge à demander à l'accueil", 'notes du client non enregistrées')
+    await pg.fill('#annFonction', 'Chef de maintenance')
+    await enregistrer()
+    f = {x['contact']: x for x in await fiches()}
+    verifier(f.get('Mme Sophie LEROY', {}).get('tel') == '06 00 00 00 01', 'modification de Sophie perdue : %s' % f)
+    verifier(f.get('M. Paul MARTIN', {}).get('fonction') == 'Chef de maintenance' and f['M. Paul MARTIN']['tel'] == '06 12 34 56 78',
+             'fiche de Paul incorrecte : %s' % f.get('M. Paul MARTIN'))
+    # 3. ajouter un contact à un client existant
+    await pg.fill('#inputRechercheAnnuaire', 'fro')
+    await pg.wait_for_timeout(300)
+    await ouvrir('M. Paul MARTIN')
+    await pg.click('[data-a="ajouter-contact-client"]')
+    await pg.wait_for_timeout(300)
+    verifier(await pg.input_value('#annContact') == '' and await pg.input_value('#annNom') == 'FROMAGERIE DU JURA',
+             'le nouveau contact doit partir d\'une fiche vide du même client')
+    await pg.fill('#annContact', 'M. Marc BLANC')
+    await pg.fill('#annTel', '06 55 44 33 22')
+    await enregistrer()
+    # 4. renommer un contact : pas de doublon
+    await pg.fill('#inputRechercheAnnuaire', 'fro')
+    await pg.wait_for_timeout(300)
+    await ouvrir('M. Paul MARTIN')
+    await pg.fill('#annContact', 'M. Paul MARTIN-DUVAL')
+    await enregistrer()
+    contacts = sorted(x['contact'] for x in await fiches())
+    verifier(contacts == ['M. Marc BLANC', 'M. Paul MARTIN-DUVAL', 'Mme Sophie LEROY'], 'contacts après modifications : %s' % contacts)
+    # les propositions de la fiche client suivent l'annuaire
+    trouves = await pg.evaluate('() => Clients.chercher("fro").map(c => c.contact + " " + c.tel)')
+    verifier(len(trouves) == 3 and 'Mme Sophie LEROY 06 00 00 00 01' in trouves, 'propositions après annuaire : %s' % trouves)
+    await t.fermer()
+    return t
+
+
+async def test_chrono_plusieurs_jours(nav, adresse):
+    """Chrono : une journée par jour (pause du soir, reprise le lendemain, chrono oublié)."""
+    from datetime import datetime
+    t = await Telephone(nav, adresse).ouvrir()
+    pg = t.pg
+    await t.identite()
+    await t.client()
+    await pg.clock.install(time=datetime(2026, 10, 12, 7, 0))
+
+    async def a(heure, action):
+        await pg.clock.set_system_time(heure)
+        await t.fermer_feuilles()
+        await pg.click('[data-a="%s"] >> nth=0' % action)
+        await pg.wait_for_timeout(500)
+
+    async def etat():
+        await pg.wait_for_timeout(1000)
+        r = await t.rapport_stocke()
+        return r, [(j['date'], j['debut'], j['fin'], round(j['dureeMs'] / 3600000, 2)) for j in r.get('jours', [])]
+
+    # 0. même jour : Terminer puis Reprendre = une pause, pas de deuxième journée
+    await a(datetime(2026, 10, 12, 8, 0), 'chrono-demarrer')
+    await a(datetime(2026, 10, 12, 12, 0), 'chrono-terminer')
+    await a(datetime(2026, 10, 12, 13, 0), 'chrono-reprendre')
+    await a(datetime(2026, 10, 12, 17, 0), 'chrono-terminer')
+    r, jours = await etat()
+    verifier(not r.get('multiJours') and len(r['chrono']['pauses']) == 1,
+             'même jour : une pause attendue, pas de nouvelle journée (%s, %s)' % (r.get('multiJours'), jours))
+    duree = await pg.evaluate('() => Report.dureeTotale(JSON.parse(localStorage["sav3.rapport"]))')
+    verifier(round(duree / 3600000, 2) == 8.0, 'même jour : 8 h attendues, %s' % (duree / 3600000))
+    # 1. le lendemain, « Reprendre » ouvre le jour 2 ; le jour 1 rejoint le relevé
+    await a(datetime(2026, 10, 13, 8, 0), 'chrono-reprendre')
+    r, jours = await etat()
+    verifier(r.get('multiJours') and jours == [('2026-10-12', '08:00', '17:00', 8.0)],
+             'jour 1 attendu dans le relevé : %s' % jours)
+    barre = await pg.inner_text('#chronoBarre')
+    verifier(r['chrono'].get('jourEnCours') and 'JOUR 2' in barre.upper(), 'le jour 2 doit être en cours : %s / %r' % (r['chrono'], barre))
+    # 2. pause le soir, reprise le lendemain matin : nouvelle journée automatique
+    await a(datetime(2026, 10, 13, 17, 30), 'chrono-pause')
+    await a(datetime(2026, 10, 14, 7, 45), 'chrono-pause')
+    r, jours = await etat()
+    verifier(jours[-1] == ('2026-10-13', '08:00', '17:30', 9.5), 'pause du soir : jour 2 attendu 08:00-17:30 : %s' % jours)
+    verifier('JOUR 3' in (await pg.inner_text('#chronoBarre')).upper(), 'le jour 3 doit commencer à la reprise')
+    await a(datetime(2026, 10, 14, 11, 45), 'chrono-terminer')
+    r, jours = await etat()
+    verifier(len(jours) == 3 and jours[-1] == ('2026-10-14', '07:45', '11:45', 4.0), 'jour 3 : %s' % jours)
+    # 3. chrono oublié la veille : on demande la fin de journée et l'heure de reprise
+    await a(datetime(2026, 10, 15, 8, 0), 'chrono-reprendre')
+    await pg.clock.set_system_time(datetime(2026, 10, 16, 9, 0))
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(800)
+    await t.fermer_feuilles()
+    verifier(await pg.query_selector('.chrono-oubli'), 'le chrono oublié la veille doit être signalé')
+    await pg.click('[data-a="chrono-terminer"]')
+    await pg.wait_for_selector('#oubliFin', timeout=4000)
+    await pg.fill('#oubliFin', '16:00')
+    await pg.fill('#oubliReprise', '08:30')
+    await pg.click('[data-a="oubli-ok"]')
+    await pg.wait_for_timeout(500)
+    await a(datetime(2026, 10, 16, 12, 30), 'chrono-terminer')
+    r, jours = await etat()
+    verifier(jours[-2:] == [('2026-10-15', '08:00', '16:00', 8.0), ('2026-10-16', '08:30', '12:30', 4.0)],
+             'chrono oublié : journées attendues 15/10 08:00-16:00 et 16/10 08:30-12:30 : %s' % jours)
+    duree = await pg.evaluate('() => Report.dureeTotale(JSON.parse(localStorage["sav3.rapport"]))')
+    verifier(round(duree / 3600000, 2) == 33.5, 'total 8 + 9,5 + 4 + 8 + 4 = 33,5 h attendu : %s' % (duree / 3600000))
+    # 4. le rapport liste les 5 journées
+    await t.fermer_feuilles()
+    await pg.click('[data-a="soumettre"] >> visible=true >> nth=0')
+    await pg.wait_for_selector('[data-a="dl"]', timeout=30000)
+    chemin_pdf = await t.telecharger('[data-a="dl"] >> visible=true')
+    texte = re.sub(r'\s+', ' ', '\n'.join(page.extract_text() or '' for page in PdfReader(chemin_pdf).pages))
+    for d in ('12/10/2026', '13/10/2026', '14/10/2026', '15/10/2026', '16/10/2026'):
+        verifier(d in texte, 'journée du %s absente du relevé du PDF' % d)
+    verifier('5 Journées' in texte or '5 journées' in texte.lower(), 'nombre de journées absent du PDF')
+    await t.fermer()
+    return t
+
+
 TESTS = [test_identite_et_numeros, test_photos_conservees, test_rapport_pdf_et_word,
-         test_historique_et_menage, test_reglages, test_sav_et_audit, test_dictee, test_import_clients]
+         test_historique_et_menage, test_reglages, test_sav_et_audit, test_dictee, test_import_clients,
+         test_annuaire, test_chrono_plusieurs_jours]
 # BFR_TEST=nom_du_test : ne lancer qu'un seul test (ex. BFR_TEST=test_rapport_pdf_et_word)
 if os.environ.get('BFR_TEST'):
     TESTS = [f for f in TESTS if f.__name__ == os.environ['BFR_TEST']]

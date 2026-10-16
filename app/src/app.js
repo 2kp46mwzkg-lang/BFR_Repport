@@ -13,7 +13,7 @@
   const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = (p) => (p || 'i') + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); };
 
   function getPath(o, p) { return p.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o); }
   function setPath(o, p, v) {
@@ -849,7 +849,7 @@
 
   function rapportVierge(r) {
     return !!r && !(r.evenements || []).length && !(r.photosLibres || []).length && !(r.pieces || []).length
-      && !(r.client && r.client.nom) && !(r.chrono && r.chrono.debut) && !r.objet && !r.actions && !r.aPrevoir
+      && !(r.client && r.client.nom) && !(r.chrono && r.chrono.debut) && !(r.jours || []).length && !r.objet && !r.actions && !r.aPrevoir
       && !(r.signatureClient && r.signatureClient.dataUrl);
   }
 
@@ -977,11 +977,45 @@
   function duree() {
     return Report.dureeTotale ? Report.dureeTotale(R) : Report.dureeMs(R.chrono);
   }
-  function dureeTexte() {
-    const ms = duree();
+  function dureeTexte(ms) {
+    if (ms === undefined) ms = tempsAffiche();
     const s = Math.floor(ms / 1000);
     return Math.floor(s / 3600) + ':' + pad2(Math.floor((s % 3600) / 60)) + ':' + pad2(s % 60);
   }
+  /* Temps affiché par le chrono : la journée en cours (intervention sur plusieurs
+     jours) ou toute l'intervention. */
+  function tempsAffiche() {
+    return (R.multiJours && R.chrono && R.chrono.jourEnCours) ? Report.dureeMs(R.chrono) : duree();
+  }
+
+  /* ---------- Intervention sur plusieurs jours ----------
+     Les journées terminées sont dans le relevé (R.jours) ; le chrono ne mesure que
+     la journée en cours (R.chrono.jourEnCours). Une nouvelle journée s'ouvre toute
+     seule quand on reprend un autre jour (bouton « Reprendre », ou pause du soir
+     reprise le lendemain). */
+  const dateLocale = (iso) => Report.dateLocale(iso ? new Date(iso) : new Date());
+  const heureCourte = (iso) => Report.heureFr(iso);
+  function chronoVide() { return { debut: null, fin: null, pauses: [], enPause: false, debutPause: null }; }
+  /* La journée du chrono rejoint le relevé (fin : finIso) ; le chrono est remis à zéro. */
+  function versReleve(finIso) {
+    if (!R.multiJours) R.jours = [];          // un ancien relevé non utilisé ne se mélange pas au nouveau
+    const j = Object.assign({ id: uid('j') }, Report.jourDepuisChrono(R.chrono, finIso));
+    R.jours.push(j);
+    R.multiJours = true;
+    R.chrono = chronoVide();
+    return j;
+  }
+  function nouvelleJournee(debutIso) {
+    R.chrono = Object.assign(chronoVide(), { debut: debutIso || new Date().toISOString(), jourEnCours: true });
+    R.statut = 'en cours';
+  }
+  const libelleJour = (j) => (Report.frDate(j.date) || j.date) + ' (' + Report.dureeDecimale(j.dureeMs || 0) + ' h)';
+  /* Chrono lancé un jour précédent et jamais arrêté (hors pause du soir). */
+  function chronoOublie() {
+    const c = R.chrono;
+    return !!(c && c.debut && !c.fin && !c.enPause && !c.nuit && dateLocale(c.debut) !== dateLocale());
+  }
+
   function demarrerChrono() {
     R.chrono.debut = new Date().toISOString();
     R.chrono.fin = null; R.chrono.pauses = []; R.chrono.enPause = false; R.chrono.debutPause = null;
@@ -991,55 +1025,168 @@
     toast('Intervention démarrée à ' + Report.heureFr(R.chrono.debut));
   }
   function basculerPause() {
-    if (!R.chrono.enPause) {
-      R.chrono.enPause = true; R.chrono.debutPause = new Date().toISOString();
-      toast('Pause (interruption, repas…) — le temps est déduit');
+    const c = R.chrono;
+    if (!c.enPause) {
+      if (chronoOublie()) { feuilleOubliChrono(); return; }
+      c.enPause = true; c.debutPause = new Date().toISOString();
+      toast('Pause (interruption, repas, fin de journée…) — le temps est déduit');
     } else {
-      R.chrono.pauses.push({ d: R.chrono.debutPause, f: new Date().toISOString() });
-      R.chrono.enPause = false; R.chrono.debutPause = null;
-      toast('Reprise de l\'intervention');
+      const maintenant = new Date().toISOString();
+      if (dateLocale(c.debutPause) !== dateLocale(maintenant)) {
+        // pause du soir reprise le lendemain : la journée d'hier s'arrête au début de la pause
+        const finJour = c.debutPause;
+        c.enPause = false; c.debutPause = null;
+        const j = versReleve(finJour);
+        nouvelleJournee(maintenant);
+        toast('Jour ' + (R.jours.length + 1) + ' commencé à ' + heureCourte(maintenant) +
+          ' — journée du ' + libelleJour(j) + ' enregistrée', 5000);
+      } else {
+        c.pauses.push({ d: c.debutPause, f: maintenant });
+        c.enPause = false; c.debutPause = null;
+        toast('Reprise de l\'intervention');
+      }
     }
     planifier(); rendreChrono();
   }
   function terminerChrono() {
-    if (R.chrono.enPause) basculerPause();
-    R.chrono.fin = new Date().toISOString();
+    const c = R.chrono;
+    if (chronoOublie()) { feuilleOubliChrono(); return; }
+    const maintenant = new Date().toISOString();
+    let fin = maintenant;
+    if (c.enPause) {
+      // en pause depuis la veille : la journée s'est arrêtée au début de la pause
+      if (dateLocale(c.debutPause) !== dateLocale(maintenant)) fin = c.debutPause;
+      else c.pauses.push({ d: c.debutPause, f: maintenant });
+      c.enPause = false; c.debutPause = null;
+    }
+    if (R.multiJours && c.jourEnCours) {
+      const j = versReleve(fin);
+      toast('Journée du ' + libelleJour(j) + ' enregistrée — ' + R.jours.length + ' jour(s), ' + Report.formatDuree(duree()) + ' au total', 4500);
+    } else {
+      c.fin = fin;
+      toast('Intervention terminée — ' + Report.formatDuree(duree()) + ' sur site');
+    }
     R.statut = R.signatureClient.dataUrl ? 'signé' : 'terminé';
     R.travauxTermines = R.travauxTermines || 'Oui';
     planifier(); rendreChrono();
-    toast('Intervention terminée — ' + Report.formatDuree(duree()) + ' sur site');
   }
+  /* « Reprendre » après « Terminer » : le même jour, l'interruption devient une pause ;
+     un autre jour, une nouvelle journée commence (la précédente rejoint le relevé). */
+  function reprendreIntervention() {
+    const c = R.chrono;
+    const maintenant = new Date().toISOString();
+    if (!R.multiJours && c.debut && c.fin) {
+      if (dateLocale(c.fin) === dateLocale(maintenant)) {
+        c.pauses = c.pauses || [];
+        c.pauses.push({ d: c.fin, f: maintenant });
+        toast('Reprise — l\'interruption de ' + heureCourte(c.fin) + ' à ' + heureCourte(maintenant) + ' est déduite', 4000);
+        c.fin = null;
+        R.statut = 'en cours';
+      } else {
+        const j = versReleve(c.fin);
+        nouvelleJournee(maintenant);
+        toast('Jour 2 commencé à ' + heureCourte(maintenant) + ' — journée du ' + libelleJour(j) + ' enregistrée', 5000);
+      }
+    } else if (R.multiJours && !c.jourEnCours) {
+      nouvelleJournee(maintenant);
+      toast('Jour ' + (R.jours.length + 1) + ' commencé à ' + heureCourte(maintenant), 3500);
+    }
+    planifier(); rendreChrono(); sauver(true);
+  }
+  /* Chrono resté lancé depuis un jour précédent : on demande l'heure de fin de cette
+     journée et l'heure de reprise aujourd'hui. */
+  function feuilleOubliChrono() {
+    const c = R.chrono;
+    const jour1 = dateLocale(c.debut);
+    const finDefaut = heureCourte(c.debut) < '17:00' ? '17:00' : heureCourte(new Date(new Date(c.debut).getTime() + 3600000).toISOString());
+    const maintenantHeure = heureCourte(new Date().toISOString());
+    const repriseDefaut = maintenantHeure < '08:00' ? maintenantHeure : '08:00';
+    Ouvrir.ouvrir(null, `<div class="panel">
+      <div class="grab"></div><h3>Chrono resté lancé</h3>
+      <p class="sub">Le chrono tourne depuis le <strong>${esc(Report.frDate(jour1))} à ${esc(heureCourte(c.debut))}</strong> : il n'a sans doute pas été arrêté en fin de journée.</p>
+      <div class="grid2">
+        <div class="field"><label>Fin de journée le ${esc(Report.frDate(jour1))}</label><input type="time" id="oubliFin" value="${esc(finDefaut)}"></div>
+        <div class="field"><label>Reprise aujourd'hui</label><input type="time" id="oubliReprise" value="${esc(repriseDefaut)}"></div>
+      </div>
+      <p class="small">La journée du ${esc(Report.frDate(jour1))} rejoint le relevé des journées ; celle d'aujourd'hui continue depuis l'heure de reprise.</p>
+      <div class="btnrow"><button class="btn grey" data-a="oubli-nuit">Non : travail continu (de nuit)</button>
+        <button class="btn" data-a="oubli-ok">Enregistrer</button></div>
+      <button class="btn ghost wide" style="margin-top:8px" data-a="fermer">Annuler</button></div>`, (panneau) => {
+      panneau.addEventListener('click', (e) => {
+        if (e.target.closest('[data-a="oubli-nuit"]')) {
+          R.chrono.nuit = true;             // on ne redemande plus pour ce chrono
+          planifier(); rendreChrono();
+          panneau.closest('.sheet').remove();
+          toast('Compris : le temps continue sans interruption');
+          return;
+        }
+        if (!e.target.closest('[data-a="oubli-ok"]')) return;
+        const hFin = $('#oubliFin', panneau).value || finDefaut;
+        const hRep = $('#oubliReprise', panneau).value || repriseDefaut;
+        let finIso = new Date(jour1 + 'T' + hFin + ':00').toISOString();
+        if (new Date(finIso) <= new Date(c.debut)) finIso = new Date(new Date(c.debut).getTime() + 60000).toISOString();
+        let repriseIso = new Date(todayISO() + 'T' + hRep + ':00').toISOString();
+        if (new Date(repriseIso) > new Date()) repriseIso = new Date().toISOString();
+        const j = versReleve(finIso);
+        nouvelleJournee(repriseIso);
+        planifier(); rendreChrono(); sauver(true);
+        panneau.closest('.sheet').remove();
+        toast('Journée du ' + libelleJour(j) + ' enregistrée — aujourd\'hui depuis ' + heureCourte(repriseIso), 5000);
+      });
+    });
+  }
+
   function rendreChrono() {
     const barre = $('#chronoBarre');
     if (!barre) return;
-    if (R.multiJours && Array.isArray(R.jours) && R.jours.length > 0) {
-      const tot = duree();
-      barre.innerHTML = `<div class="chrono-encours">
-        <div class="chrono-temps"><span class="chrono-label">Heures cumulées (${R.jours.length} jour(s))</span>
-          <strong id="chronoTemps">${Report.formatDuree(tot) || '0 min'}</strong></div>
-        <div class="chrono-actions"><button class="btn sm grey" data-a="chrono-ajuster">${(ICO.pen && ICO.pen(14)) || ''} Relevé jours</button></div></div>
-        <p class="chrono-note">${R.jours.map(j => (Report.frDate(j.date) || j.date) + ' (' + (j.dureeHeures || 0) + ' h)').join(' • ')} • ${Report.dureeDecimale(tot)} h</p>`;
-      clearInterval(tic);
-      return;
-    }
     const c = R.chrono;
-    if (!c.debut) {
+    const icoPlay = (ICO.play && ICO.play(14)) || '', icoPen = (ICO.pen && ICO.pen(14)) || '';
+    const smsLien = (txt) => (R.client && R.client.nom ? ' • <a href="#" data-a="sms-arrivee" style="color:var(--bleu,#06baf2);text-decoration:underline">' + txt + '</a>' : '');
+    const avertissementOubli = chronoOublie()
+      ? `<div class="chrono-oubli">Chrono lancé le ${esc(Report.frDate(dateLocale(c.debut)))} à ${esc(heureCourte(c.debut))} et jamais arrêté.
+          <button type="button" class="btn sm" data-a="chrono-oubli">Corriger</button></div>` : '';
+    const boutonsEnCours = `<div class="chrono-actions">
+          <button class="btn sm grey" data-a="chrono-pause">${c.enPause ? (icoPlay + ' Reprendre') : (((ICO.pause && ICO.pause(14)) || '') + ' Pause')}</button>
+          <button class="btn sm or" data-a="chrono-terminer">${(ICO.stop && ICO.stop(14)) || ''} Terminer</button>
+        </div>`;
+
+    if (R.multiJours && Array.isArray(R.jours) && (R.jours.length > 0 || c.jourEnCours)) {
+      const tot = duree();
+      const listeJours = R.jours.map(libelleJour).join(' • ');
+      if (c.jourEnCours && c.debut) {
+        // une journée est en cours
+        barre.innerHTML = `<div class="chrono-encours">
+          <div class="chrono-temps"><span class="chrono-label">Jour ${R.jours.length + 1} — ${c.enPause ? 'en pause depuis' : 'sur site depuis'} ${esc(heureCourte(c.enPause ? c.debutPause : c.debut))}</span>
+            <strong id="chronoTemps">${dureeTexte()}</strong></div>
+          ${boutonsEnCours}</div>
+          ${avertissementOubli}
+          <p class="chrono-note">${listeJours ? 'Jours précédents : ' + esc(listeJours) + ' • ' : ''}cumul ${esc(Report.formatDuree(tot) || '0 min')}${(c.pauses || []).length ? ' • ' + c.pauses.length + ' pause(s) aujourd\'hui' : ''}${smsLien('SMS d\'arrivée')}</p>`;
+      } else {
+        barre.innerHTML = `<div class="chrono-encours">
+          <div class="chrono-temps"><span class="chrono-label">Heures cumulées (${R.jours.length} jour(s))</span>
+            <strong id="chronoTemps">${Report.formatDuree(tot) || '0 min'}</strong></div>
+          <div class="chrono-actions">
+            <button class="btn sm" data-a="chrono-reprendre" title="Commencer une nouvelle journée d'intervention">${icoPlay} Reprendre</button>
+            <button class="btn sm grey" data-a="chrono-ajuster">${icoPen} Relevé jours</button></div></div>
+          <p class="chrono-note">${esc(listeJours)} • ${Report.dureeDecimale(tot)} h</p>`;
+      }
+    } else if (!c.debut) {
       barre.innerHTML = `<button class="btn chrono-demarrer" data-a="chrono-demarrer" style="width:100%">
         ${(ICO.play && ICO.play(16)) || ''} Démarrer l'intervention</button>
-        <p class="chrono-note">L'heure de début est enregistrée automatiquement.${R.client && R.client.nom ? ' • <a href="#" data-a="sms-arrivee" style="color:var(--bleu,#06baf2);text-decoration:underline">Prévenir le contact par SMS</a>' : ''}</p>`;
+        <p class="chrono-note">L'heure de début est enregistrée automatiquement.${smsLien('Prévenir le contact par SMS')}</p>`;
     } else if (!c.fin) {
       barre.innerHTML = `<div class="chrono-encours">
         <div class="chrono-temps"><span class="chrono-label">${c.enPause ? 'En pause depuis' : 'Sur site depuis'}</span>
           <strong id="chronoTemps">${dureeTexte()}</strong></div>
-        <div class="chrono-actions">
-          <button class="btn sm grey" data-a="chrono-pause">${c.enPause ? (((ICO.play && ICO.play(14)) || '') + ' Reprendre') : (((ICO.pause && ICO.pause(14)) || '') + ' Pause')}</button>
-          <button class="btn sm or" data-a="chrono-terminer">${(ICO.stop && ICO.stop(14)) || ''} Terminer</button>
-        </div></div>
-        <p class="chrono-note">Début ${Report.heureFr(c.debut)}${(c.pauses || []).length ? ' — ' + c.pauses.length + ' pause(s) déduite(s)' : ''}${R.client && R.client.nom ? ' • <a href="#" data-a="sms-arrivee" style="color:var(--bleu,#06baf2);text-decoration:underline">SMS d\'arrivée</a>' : ''}</p>`;
+        ${boutonsEnCours}</div>
+        ${avertissementOubli}
+        <p class="chrono-note">Début ${Report.heureFr(c.debut)}${(c.pauses || []).length ? ' — ' + c.pauses.length + ' pause(s) déduite(s)' : ''}${smsLien('SMS d\'arrivée')}</p>`;
     } else {
       barre.innerHTML = `<div class="chrono-encours">
         <div class="chrono-temps"><span class="chrono-label">Temps sur site</span><strong>${Report.formatDuree(duree()) || '0 min'}</strong></div>
-        <div class="chrono-actions"><button class="btn sm grey" data-a="chrono-ajuster">${(ICO.pen && ICO.pen(14)) || ''} Ajuster</button></div></div>
+        <div class="chrono-actions">
+          <button class="btn sm" data-a="chrono-reprendre" title="Reprendre l'intervention (un autre jour : nouvelle journée)">${icoPlay} Reprendre</button>
+          <button class="btn sm grey" data-a="chrono-ajuster">${icoPen} Ajuster</button></div></div>
         <p class="chrono-note">De ${Report.heureFr(c.debut)} à ${Report.heureFr(c.fin)}${(c.pauses || []).length ? ' — ' + c.pauses.length + ' pause(s)' : ''} • ${Report.dureeDecimale(duree())} h</p>`;
     }
     clearInterval(tic);
@@ -3945,19 +4092,53 @@
       return String(t == null ? '' : t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '');
     }
 
-    let clientEdite = clientNomInitial ? (Clients.parNom(clientNomInitial) || { nom: clientNomInitial, isNouveau: true }) : null;
+    // ouvert depuis l'intervention : la fiche du contact de l'intervention
+    const contactInitial = (clientNomInitial && normTxt(clientNomInitial) === normTxt(R.client.nom)) ? R.client.contact : '';
+    let clientEdite = clientNomInitial ? (Clients.parNom(clientNomInitial, contactInitial) || { nom: clientNomInitial, isNouveau: true }) : null;
     let modeEdition = !!clientEdite;
     let recherche = '';
     let logoTemp = clientEdite ? (clientEdite.logo || '') : '';
+    let visibles = [];          // fiches affichées : une carte = une ligne (un client, ou un contact d'un client)
+    let contactOrigine = null;  // contact de la fiche ouverte, tel qu'il était avant modification
 
     Ouvrir.ouvrir(null, `<div class="panel" style="max-height:90vh;display:flex;flex-direction:column">
       <div id="annuaireCorps" style="display:flex;flex-direction:column;min-height:0;flex:1"></div>
     </div>`, (pan) => {
       const zoneCorps = $('#annuaireCorps', pan);
 
+      /* Liste de l'annuaire. Le cadre (titre, recherche) est dessiné une fois ; seule
+         la liste est redessinée pendant la frappe : redessiner aussi le champ de
+         recherche fermait le clavier de l'iPhone à chaque lettre. */
       function afficherListe() {
         modeEdition = false;
         clientEdite = null;
+        contactOrigine = null;
+        zoneCorps.innerHTML = `
+          <div class="grab"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+            <h3 style="margin:0">${(ICO.users && ICO.users(20)) || ''} Annuaire clients</h3>
+            <button type="button" class="btn sm" data-a="nouveau-client">${(ICO.plus && ICO.plus(14)) || ''} Nouveau client</button>
+          </div>
+          <p class="sub" style="margin-bottom:8px">Consultez ou enrichissez les coordonnées clients. Les modifications sont conservées sur ce téléphone <strong>sans modifier votre intervention en cours</strong>.</p>
+
+          <div style="margin-bottom:8px">
+            <input type="search" id="inputRechercheAnnuaire" autocomplete="off" placeholder="Rechercher par nom, ville, contact, e-mail..." value="${esc(recherche)}" style="width:100%;font-size:16px;padding:8px 12px;border:1px solid var(--bord,#cbd5e1);border-radius:8px">
+          </div>
+
+          <div id="annuaireCompte" style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#64748b;margin-bottom:8px"></div>
+
+          <div id="listeCartesClients" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px"></div>
+
+          <div class="btnrow" style="margin-top:10px">
+            <button type="button" class="btn grey wide" data-a="fermer-annuaire">Fermer</button>
+          </div>
+        `;
+        const inp = $('#inputRechercheAnnuaire', zoneCorps);
+        if (inp) inp.addEventListener('input', () => { recherche = inp.value; majListe(); });
+        majListe();
+      }
+
+      function majListe() {
         const tousClients = Clients.liste();
         const memo = Clients.memo();
         const q = normTxt(recherche);
@@ -3970,42 +4151,28 @@
                    normTxt(c.email).indexOf(q) !== -1;
           });
         }
-        // Tri : fiches enrichies ou récentes d'abord, puis ordre alphabétique
-        filtres.sort((a, b) => {
-          const aMemo = !!memo[normTxt(a.nom)];
-          const bMemo = !!memo[normTxt(b.nom)];
+        // Tri : fiches enrichies d'abord, puis ordre alphabétique (contacts d'un même client groupés)
+        filtres = filtres.map((c, i) => ({ c: c, i: i })).sort((a, b) => {
+          const aMemo = !!memo[normTxt(a.c.nom)];
+          const bMemo = !!memo[normTxt(b.c.nom)];
           if (aMemo && !bMemo) return -1;
           if (!aMemo && bMemo) return 1;
-          return String(a.nom || '').localeCompare(String(b.nom || ''), 'fr');
-        });
+          return String(a.c.nom || '').localeCompare(String(b.c.nom || ''), 'fr') || (a.i - b.i);
+        }).map(x => x.c);
 
-        const nbTotal = tousClients.length;
         const nbMemo = Object.keys(memo).length;
         const afficherMax = 50;
-        const clientsVisibles = filtres.slice(0, afficherMax);
+        visibles = filtres.slice(0, afficherMax);
 
-        zoneCorps.innerHTML = `
-          <div class="grab"></div>
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-            <h3 style="margin:0">${(ICO.users && ICO.users(20)) || ''} Annuaire clients</h3>
-            <button type="button" class="btn sm" data-a="nouveau-client">${(ICO.plus && ICO.plus(14)) || ''} Nouveau client</button>
-          </div>
-          <p class="sub" style="margin-bottom:8px">Consultez ou enrichissez les coordonnées clients. Les modifications sont conservées sur ce téléphone <strong>sans modifier votre intervention en cours</strong>.</p>
-
-          <div style="margin-bottom:8px">
-            <input type="search" id="inputRechercheAnnuaire" placeholder="Rechercher par nom, ville, contact, e-mail..." value="${esc(recherche)}" style="width:100%;font-size:14px;padding:8px 12px;border:1px solid var(--bord,#cbd5e1);border-radius:8px">
-          </div>
-
-          <div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:#64748b;margin-bottom:8px">
-            <span>${filtres.length} client(s) trouvé(s) ${filtres.length > afficherMax ? '(50 premiers)' : ''}</span>
-            <span>${nbMemo} fiche(s) personnalisée(s)</span>
-          </div>
-
-          <div id="listeCartesClients" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px">
-            ${clientsVisibles.length ? clientsVisibles.map(c => {
+        const compte = $('#annuaireCompte', zoneCorps);
+        if (compte) compte.innerHTML = `<span>${filtres.length} fiche(s) trouvée(s) ${filtres.length > afficherMax ? '(50 premières)' : ''}</span>
+            <span>${nbMemo} fiche(s) personnalisée(s)</span>`;
+        const zoneListe = $('#listeCartesClients', zoneCorps);
+        if (!zoneListe) return;
+        zoneListe.innerHTML = visibles.length ? visibles.map((c, idx) => {
               const estEnrichi = !!memo[normTxt(c.nom)];
               return `
-                <div class="card" data-client-nom="${esc(c.nom)}" style="margin:0;padding:10px 12px;cursor:pointer;border:1px solid ${estEnrichi ? 'var(--bleu,#06baf2)' : 'var(--bord,#e2e8f0)'};border-radius:8px;background:#fff;transition:background 0.15s">
+                <div class="card" data-client-idx="${idx}" style="margin:0;padding:10px 12px;cursor:pointer;border:1px solid ${estEnrichi ? 'var(--bleu,#06baf2)' : 'var(--bord,#e2e8f0)'};border-radius:8px;background:#fff;transition:background 0.15s">
                   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
                     <div style="min-width:0;flex:1">
                       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -4019,35 +4186,22 @@
                         ${c.email ? `<span>✉ ${esc(c.email)}</span>` : ''}
                       </div>
                     </div>
-                    <button type="button" class="btn sm grey" data-client-nom="${esc(c.nom)}" style="padding:4px 10px;font-size:11.5px;flex-shrink:0">Modifier</button>
+                    <button type="button" class="btn sm grey" data-client-idx="${idx}" style="padding:4px 10px;font-size:11.5px;flex-shrink:0">Modifier</button>
                   </div>
                 </div>`;
             }).join('') : `
               <div style="text-align:center;padding:24px 12px;color:#64748b">
                 <p>Aucun client trouvé pour « ${esc(recherche)} »</p>
                 <button type="button" class="btn sm" data-a="creer-recherche" style="margin-top:8px">${(ICO.plus && ICO.plus(14)) || ''} Créer la fiche « ${esc(recherche)} »</button>
-              </div>`}
-          </div>
-
-          <div class="btnrow" style="margin-top:10px">
-            <button type="button" class="btn grey wide" data-a="fermer-annuaire">Fermer</button>
-          </div>
-        `;
-
-        const inp = $('#inputRechercheAnnuaire', zoneCorps);
-        if (inp) {
-          inp.addEventListener('input', () => {
-            recherche = inp.value;
-            afficherListe();
-            const reInp = $('#inputRechercheAnnuaire', zoneCorps);
-            if (reInp) { reInp.focus(); reInp.selectionStart = reInp.selectionEnd = reInp.value.length; }
-          });
-        }
+              </div>`;
       }
 
-      function afficherFormulaire(client, isNouveau) {
+      function afficherFormulaire(client, isNouveau, nouveauContact) {
         modeEdition = true;
         client = client || { nom: '', adresse: '', ville: '', contact: '', fonction: '', tel: '', email: '', logo: '', langue: '', numeroClient: '', autresContacts: '' };
+        clientEdite = client;
+        // le contact ouvert (pour un client à plusieurs contacts, c'est CE contact qui est modifié)
+        contactOrigine = (isNouveau || nouveauContact) ? '' : (client.contact || '');
         logoTemp = client.logo || '';
         const memo = Clients.memo();
         const estDansMemo = !!memo[normTxt(client.nom)];
@@ -4062,7 +4216,7 @@
         zoneCorps.innerHTML = `
           <div class="grab"></div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-            <h3 style="margin:0">${isNouveau ? 'Nouveau client' : 'Fiche client'}</h3>
+            <h3 style="margin:0">${isNouveau ? 'Nouveau client' : (nouveauContact ? 'Nouveau contact' : 'Fiche client')}</h3>
             <button type="button" class="btn ghost sm" data-a="retour-liste">← Annuaire</button>
           </div>
 
@@ -4115,6 +4269,8 @@
             </div>
           </div>
 
+          ${(!isNouveau && !nouveauContact) ? `<button type="button" class="btn ghost sm" data-a="ajouter-contact-client" style="width:100%;margin-top:6px">${(ICO.plus && ICO.plus(14)) || ''} Ajouter un autre contact pour ce client</button>` : ''}
+
           <div class="btnrow" style="margin-top:10px">
             <button type="button" class="btn grey" data-a="retour-liste">Annuler</button>
             <button type="button" class="btn" data-a="enregistrer-client">Enregistrer dans l'annuaire</button>
@@ -4156,11 +4312,18 @@
         const btnCreerRech = ev.target.closest('[data-a="creer-recherche"]');
         if (btnCreerRech) { afficherFormulaire({ nom: recherche.trim() }, true); return; }
 
-        const carteClient = ev.target.closest('[data-client-nom]');
+        const carteClient = ev.target.closest('[data-client-idx]');
         if (carteClient) {
-          const nom = carteClient.dataset.clientNom;
-          const c = Clients.parNom(nom);
-          if (c) afficherFormulaire(c, false);
+          // la fiche exacte de la carte (et non la première fiche portant ce nom de client)
+          const c = visibles[+carteClient.dataset.clientIdx];
+          if (c) afficherFormulaire(Object.assign({}, c), false);
+          return;
+        }
+
+        const btnAjContact = ev.target.closest('[data-a="ajouter-contact-client"]');
+        if (btnAjContact) {
+          const base = Object.assign({}, clientEdite || {}, { nom: ($('#annNom', zoneCorps).value || '').trim() || (clientEdite && clientEdite.nom) || '' });
+          afficherFormulaire(Object.assign(base, { contact: '', fonction: '', tel: '', email: '', numeroClient: '' }), false, true);
           return;
         }
 
@@ -4213,20 +4376,27 @@
             autresContacts: notes
           };
 
-          Clients.retenir(donnees);
+          if (!Clients.retenir(donnees, contactOrigine)) {
+            toast('Enregistrement impossible : mémoire du navigateur pleine', 4000);
+            return;
+          }
 
           // Vérifier si le client édité est le client de l'intervention active
           const estActif = normTxt(R.client.nom) && normTxt(R.client.nom) === normTxt(nom);
+          // … et si c'est bien le contact de l'intervention (un client peut en avoir plusieurs)
+          const memeContact = !normTxt(R.client.contact) || normTxt(R.client.contact) === normTxt(contactOrigine || contact);
           if (estActif) {
             R.client.adresse = adresse;
             R.client.lieu = ville;
-            R.client.contact = contact;
-            R.client.fonction = fonction;
-            R.client.tel = tel;
-            R.client.email = email;
             R.client.logo = logoTemp || '';
-            R.client.numeroClient = tel;
             R.client.noteContacts = notes;
+            if (memeContact) {
+              R.client.contact = contact;
+              R.client.fonction = fonction;
+              R.client.tel = tel;
+              R.client.email = email;
+              R.client.numeroClient = tel;
+            }
             if (langue) R.client.langue = langue;
             planifier(); rendreEntete(); rendreTout();
             toast('Fiche « ' + nom + ' » enregistrée (intervention en cours actualisée)');
@@ -4590,6 +4760,8 @@
       }
       else if (a === 'chrono-pause') basculerPause();
       else if (a === 'chrono-terminer') terminerChrono();
+      else if (a === 'chrono-reprendre') reprendreIntervention();
+      else if (a === 'chrono-oubli') feuilleOubliChrono();
       else if (a === 'chrono-ajuster') feuilleAjusterChrono();
       else if (a === 'editer-trajet') feuilleTrajet(false);
       else if (a === 'cloturer-retour-reel') feuilleTrajet(true);
@@ -4668,7 +4840,9 @@
       if (j.debut && j.fin) {
         const [hd, md] = (j.debut || '0:0').split(':').map(Number);
         const [hf, mf] = (j.fin || '0:0').split(':').map(Number);
-        const min = (hf * 60 + mf) - (hd * 60 + md) - (Number(j.pauseMinutes) || 0);
+        let ecart = (hf * 60 + mf) - (hd * 60 + md);
+        if (ecart < 0) ecart += 1440;                 // journée qui passe minuit (travail de nuit)
+        const min = ecart - (Number(j.pauseMinutes) || 0);
         j.dureeHeures = Math.max(0, Math.round(min * 100 / 60) / 100);
         j.dureeMs = Math.max(0, min * 60000);
       } else {
@@ -4728,6 +4902,7 @@
       </div>
       <div id="blocMultiJours" ${multi ? '' : 'hidden'}>
         <p class="small">Saisissez les horaires et temps de pause pour chaque journée. Les heures cumulées sont calculées automatiquement.</p>
+        ${(c.jourEnCours && c.debut) ? `<p class="small" style="color:#0369a1"><strong>Journée en cours</strong> depuis ${esc(Report.heureFr(c.debut))} : elle s'ajoutera au relevé à « Terminer » (le total ci-dessous la compte déjà).</p>` : ''}
         <div id="listeJours" style="display:flex;flex-direction:column;gap:12px;margin:12px 0"></div>
         <button type="button" class="btn sm grey" id="btnAjouterJour">+ Ajouter une journée</button>
         <div style="margin-top:14px;padding:10px 12px;background:#e0f2fe;border-radius:8px;display:flex;justify-content:space-between;align-items:center">

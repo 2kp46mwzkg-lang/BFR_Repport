@@ -21,6 +21,15 @@
       .toUpperCase()
       .replace(/[^A-Z0-9]+/g, '');                        // espaces, _, ., -, etc.
   }
+  /* Contacts mémorisés d'un client ({ cléContact: { contact, fonction, tel, e-mail } }).
+     Les fiches enregistrées par les anciennes versions n'ont qu'un contact, en tête. */
+  function contactsMemorises(m) {
+    const c = Object.assign({}, (m && m.contacts) || {});
+    if (m && m.contact && !Object.keys(c).length) {
+      c[norm(m.contact)] = { contact: m.contact, fonction: m.fonction || '', tel: m.tel || '', email: m.email || '' };
+    }
+    return c;
+  }
   function joli(txt) {
     return String(txt == null ? '' : txt).replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
   }
@@ -46,16 +55,19 @@
     },
     /* Liste de référence + tout ce que les techniciens ont saisi en plus.
        Le classeur peut avoir une ligne par contact (plusieurs lignes par client) :
-       - ce qui concerne le CLIENT (adresse, lieu, logo, n° client, langue) et a été
-         saisi sur le terrain s'applique à toutes ses lignes ;
-       - ce qui concerne un CONTACT (nom, fonction, téléphone, e-mail) ne corrige que
-         la ligne de ce contact ; un contact saisi sur le terrain et absent du
-         classeur est proposé EN PLUS, sans masquer les autres. */
+       - ce qui concerne le CLIENT (adresse, lieu, logo, n° client, langue, notes)
+         et a été saisi sur le terrain s'applique à toutes ses lignes ;
+       - ce qui concerne un CONTACT (nom, fonction, téléphone, e-mail) est mémorisé
+         contact par contact et ne corrige que la ligne de ce contact ; un contact
+         saisi sur le terrain et absent du classeur est proposé EN PLUS. */
     liste: function () {
       const memo = this.memo();
-      const CHAMPS_CLIENT = ['adresse', 'ville', 'logo', 'numeroClient', 'langue'];
+      const CHAMPS_CLIENT = ['adresse', 'ville', 'logo', 'numeroClient', 'langue', 'autresContacts'];
       const CHAMPS_CONTACT = ['contact', 'fonction', 'tel', 'email'];
-      const contactsVus = {};
+      const appliquer = (fiche, o) => {
+        if (o) CHAMPS_CONTACT.forEach(ch => { if (o[ch] !== undefined && (o[ch] || ch !== 'contact')) fiche[ch] = o[ch]; });
+      };
+      const vus = {};
       const out = [];
       this.base().forEach(c => {
         const cle = norm(c.nom);
@@ -63,29 +75,47 @@
         const fiche = Object.assign({}, c);
         if (m) {
           CHAMPS_CLIENT.forEach(ch => { if (m[ch]) fiche[ch] = m[ch]; });
-          const memeContact = !!m.contact && norm(m.contact) === norm(c.contact);
-          CHAMPS_CONTACT.forEach(ch => { if (m[ch] && (memeContact || (!c.contact && !fiche[ch]))) fiche[ch] = m[ch]; });
+          const cts = contactsMemorises(m);
+          if (c.contact) {
+            const o1 = cts[norm(c.contact)];
+            appliquer(fiche, o1);
+            // contact renommé dans l'annuaire, puis modifié sous son nouveau nom
+            if (o1 && o1.contact && norm(o1.contact) !== norm(c.contact)) appliquer(fiche, cts[norm(o1.contact)]);
+          } else if (!vus[cle]) {
+            // ligne du classeur sans contact : complétée par le contact saisi sur le terrain
+            const k0 = Object.keys(cts)[0];
+            if (k0) appliquer(fiche, cts[k0]);
+          }
         }
-        (contactsVus[cle] = contactsVus[cle] || {})[norm(fiche.contact)] = fiche;
+        vus[cle] = vus[cle] || {};
+        vus[cle][norm(fiche.contact)] = true;
+        if (c.contact) vus[cle][norm(c.contact)] = true;
         out.push(fiche);
       });
       Object.keys(memo).forEach(k => {
         const m = memo[k];
         if (!m || !m.nom) return;
-        if (contactsVus[k]) {
-          /* Client du classeur, contact saisi sur le terrain qui n'y figure pas. */
-          if (m.contact && !contactsVus[k][norm(m.contact)]) {
-            const modele = out.find(c => norm(c.nom) === k) || {};
-            const fiche = Object.assign({}, modele, { contact: m.contact, fonction: m.fonction || '',
-              tel: m.tel || '', email: m.email || '', autresContacts: '' });
-            contactsVus[k][norm(m.contact)] = fiche;
+        const cts = contactsMemorises(m);
+        if (vus[k]) {
+          /* Client du classeur : contacts saisis sur le terrain qui n'y figurent pas. */
+          const modele = out.find(c => norm(c.nom) === k) || {};
+          Object.keys(cts).forEach(kc => {
+            const o = cts[kc];
+            if (!o || !o.contact || vus[k][kc] || vus[k][norm(o.contact)]) return;
+            const fiche = Object.assign({}, modele, { contact: '', fonction: '', tel: '', email: '', autresContacts: m.autresContacts || '' });
+            appliquer(fiche, o);
+            vus[k][norm(o.contact)] = true;
             out.push(fiche);
-          }
+          });
           return;
         }
-        /* Clients saisis sur le terrain et absents du classeur : on les garde. */
-        contactsVus[k] = {};
-        out.push(Object.assign({ contact: '', fonction: '', tel: '', adresse: '', ville: '', logo: '' }, m));
+        /* Client saisi sur le terrain et absent du classeur : une ligne par contact. */
+        const base = Object.assign({ contact: '', fonction: '', tel: '', adresse: '', ville: '', logo: '' }, m);
+        delete base.contacts;
+        const lesContacts = Object.keys(cts).map(kc => cts[kc]).filter(o => o && o.contact);
+        vus[k] = {};
+        if (!lesContacts.length) { out.push(base); return; }
+        lesContacts.forEach(o => { const f = Object.assign({}, base); appliquer(f, o); out.push(f); });
       });
       return out;
     },
@@ -117,36 +147,51 @@
       return trouves.slice(0, limite).map(x => x.c);
     },
     /* Recherche exacte par nom (pour retrouver les données mémorisées). */
-    parNom: function (nom) {
+    parNom: function (nom, contact) {
       const n = norm(nom);
       if (!n) return null;
       const candidats = this.liste().filter(c => norm(c.nom) === n || norm(c.reference) === n);
       if (!candidats.length) return this.memo()[n] || null;
-      return candidats[0];
+      // plusieurs contacts pour ce client : celui demandé s'il existe
+      const k = norm(contact);
+      return (k && candidats.find(c => norm(c.contact) === k)) || candidats[0];
     },
     /* ---------- Mémorisation ---------------------------------------------- */
     /* Ce que le technicien a saisi et qui n'est pas au classeur (tél., e-mail,
        logo, contact…) est conservé dans le téléphone pour la prochaine fois. */
-    retenir: function (client) {
-      if (!client || !client.nom) return;
+    /* contactOrigine : nom du contact tel qu'il était à l'ouverture de la fiche (annuaire) ;
+       il permet de modifier ou de renommer CE contact sans toucher aux autres. */
+    retenir: function (client, contactOrigine) {
+      if (!client || !client.nom) return false;
       const memo = this.memo();
       const cle = norm(client.nom);
       const avant = memo[cle] || {};
+      const v = (ch) => (client[ch] !== undefined ? client[ch] : (avant[ch] || ''));
       const apres = {
         nom: joli(client.nom),
         ville: client.lieu !== undefined ? client.lieu : (client.ville !== undefined ? client.ville : (avant.ville || '')),
-        adresse: client.adresse !== undefined ? client.adresse : (avant.adresse || ''),
-        contact: client.contact !== undefined ? client.contact : (avant.contact || ''),
-        fonction: client.fonction !== undefined ? client.fonction : (avant.fonction || ''),
-        tel: client.tel !== undefined ? client.tel : (avant.tel || ''),
-        email: client.email !== undefined ? client.email : (avant.email || ''),
-        logo: client.logo !== undefined ? client.logo : (avant.logo || ''),
-        numeroClient: client.numeroClient !== undefined ? client.numeroClient : (avant.numeroClient || ''),
+        adresse: v('adresse'),
+        logo: v('logo'),
+        numeroClient: v('numeroClient'),
         /* Langue retenue pour ce client : le rapport bilingue est reproposé
            à l'intervention suivante (le technicien garde la main). */
-        langue: client.langue !== undefined ? client.langue : (avant.langue || ''),
+        langue: v('langue'),
+        autresContacts: client.autresContacts !== undefined ? client.autresContacts
+          : (client.noteContacts !== undefined ? client.noteContacts : (avant.autresContacts || '')),
+        // dernier contact utilisé (repris par les anciennes versions)
+        contact: v('contact'), fonction: v('fonction'), tel: v('tel'), email: v('email'),
+        contacts: contactsMemorises(avant),
         maj: new Date().toISOString()
       };
+      if (client.contact !== undefined || contactOrigine) {
+        const origine = contactOrigine !== undefined && contactOrigine !== null && contactOrigine !== '' ? contactOrigine : client.contact;
+        const k = norm(origine) || norm(client.contact);
+        if (k) {
+          apres.contacts[k] = { contact: client.contact || '', fonction: client.fonction || '', tel: client.tel || '', email: client.email || '' };
+          // contact renommé : son nouveau nom ne doit pas garder d'anciennes données
+          if (norm(client.contact) && norm(client.contact) !== k) delete apres.contacts[norm(client.contact)];
+        }
+      }
       memo[cle] = apres;
       try {
         global.localStorage.setItem(CLE_MEMO, JSON.stringify(memo));

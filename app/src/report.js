@@ -172,14 +172,53 @@
       const finP = p.f ? new Date(p.f).getTime() : ref;
       total -= Math.max(0, Math.min(finP, ref) - debutP);
     });
+    // pause en cours : le temps ne court pas
+    if (chrono.enPause && chrono.debutPause && !chrono.fin) {
+      total -= Math.max(0, ref - new Date(chrono.debutPause).getTime());
+    }
     return Math.max(0, total);
+  }
+
+  /* ---------- Interventions sur plusieurs jours ----------
+     Le relevé (i.jours) contient les journées terminées ; le chrono ne mesure que
+     la journée en cours (i.chrono.jourEnCours). */
+  function dateLocale(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+  /* Journée du relevé tirée du chrono : date, début, fin, pauses, durée exacte.
+     finIso : fin de la journée (par défaut maintenant). */
+  function jourDepuisChrono(c, finIso, maintenant) {
+    const deb = new Date(c.debut).getTime();
+    const ref = finIso ? new Date(finIso).getTime() : (maintenant || Date.now());
+    let pausesMs = 0;
+    (c.pauses || []).forEach(function (p) {
+      const d = Math.max(new Date(p.d).getTime(), deb), f = p.f ? new Date(p.f).getTime() : ref;
+      pausesMs += Math.max(0, Math.min(f, ref) - d);
+    });
+    if (c.enPause && c.debutPause) pausesMs += Math.max(0, ref - Math.max(new Date(c.debutPause).getTime(), deb));
+    const ms = Math.max(0, ref - deb - pausesMs);
+    return {
+      date: dateLocale(new Date(deb)), debut: heureFr(c.debut), fin: heureFr(new Date(ref).toISOString()),
+      pauseMinutes: Math.round(pausesMs / 60000), description: '',
+      dureeMs: ms, dureeHeures: Math.round(ms / 36000) / 100
+    };
+  }
+  /* Copie du rapport pour l'impression : la journée en cours apparaît dans le relevé. */
+  function pourRapport(i) {
+    if (!i || !i.multiJours || !i.chrono || !i.chrono.jourEnCours || !i.chrono.debut) return i;
+    const j = jourDepuisChrono(i.chrono, i.chrono.fin || null);
+    j.enCours = !i.chrono.fin;
+    return Object.assign({}, i, {
+      jours: (i.jours || []).concat([j]),
+      chrono: Object.assign({}, i.chrono, { jourEnCours: false })
+    });
   }
 
   function dureeTotale(i, maintenant) {
     if (!i) return 0;
-    if (i.multiJours && Array.isArray(i.jours) && i.jours.length > 0) {
-      let totalMs = 0;
-      i.jours.forEach(function (j) {
+    const jourEnCours = !!(i.chrono && i.chrono.jourEnCours && i.chrono.debut);
+    if (i.multiJours && ((Array.isArray(i.jours) && i.jours.length > 0) || jourEnCours)) {
+      // journées terminées + journée en cours du chrono
+      let totalMs = jourEnCours ? dureeMs(i.chrono, maintenant) : 0;
+      (i.jours || []).forEach(function (j) {
         if (typeof j.dureeMs === 'number') {
           totalMs += j.dureeMs;
         } else if (typeof j.dureeHeures === 'number') {
@@ -189,7 +228,9 @@
         } else if (j.debut && j.fin) {
           const p1 = j.debut.split(':').map(Number);
           const p2 = j.fin.split(':').map(Number);
-          const min = (p2[0] * 60 + p2[1]) - (p1[0] * 60 + p1[1]) - (Number(j.pauseMinutes) || 0);
+          let min = (p2[0] * 60 + p2[1]) - (p1[0] * 60 + p1[1]);
+          if (min < 0) min += 1440;                       // journée qui passe minuit
+          min -= (Number(j.pauseMinutes) || 0);
           if (min > 0) totalMs += min * 60000;
         }
       });
@@ -515,6 +556,7 @@
      ====================================================================== */
   class RapportPDF {
     constructor(intervention, reglages, opts) {
+      intervention = pourRapport(intervention);
       this.i = intervention;
       this.s = reglages || {};
       this.opts = opts || {};
@@ -1207,7 +1249,7 @@
         p.rect(this.M, y, this.CW, hLigne, { fill: fond, stroke: C.bord, lineWidth: 0.4 });
 
         const dt = frDate(item.date) || '—';
-        const hor = (item.debut && item.fin) ? (item.debut + ' - ' + item.fin) : (item.debut || item.fin || '—');
+        const hor = item.enCours ? (item.debut + ' - ' + this.L('en cours')) : ((item.debut && item.fin) ? (item.debut + ' - ' + item.fin) : (item.debut || item.fin || '—'));
         const pauseTxt = item.pauseMinutes ? (item.pauseMinutes + ' min') : '—';
         const dh = typeof item.dureeHeures === 'number' ? item.dureeHeures : (typeof item.duree === 'number' ? item.duree : 0);
         totalH += dh;
@@ -1564,6 +1606,7 @@
      ====================================================================== */
   class RapportWord {
     constructor(intervention, reglages, opts) {
+      intervention = pourRapport(intervention);
       this.i = intervention;
       this.s = reglages || {};
       this.opts = opts || {};
@@ -1761,7 +1804,7 @@
         let totH = 0;
         const lignesJours = i.jours.map(item => {
           const dt = frDate(item.date) || '—';
-          const hor = (item.debut && item.fin) ? (item.debut + ' - ' + item.fin) : (item.debut || item.fin || '—');
+          const hor = item.enCours ? (item.debut + ' - ' + this.L('en cours')) : ((item.debut && item.fin) ? (item.debut + ' - ' + item.fin) : (item.debut || item.fin || '—'));
           const pauseTxt = item.pauseMinutes ? (item.pauseMinutes + ' min') : '—';
           const dh = typeof item.dureeHeures === 'number' ? item.dureeHeures : (typeof item.duree === 'number' ? item.duree : 0);
           totH += dh;
@@ -2040,6 +2083,7 @@
 
   /* ===================== E-mails ====================================== */
   function variables(intervention, reglages) {
+    intervention = pourRapport(intervention);
     const e = etat(intervention, reglages);
     const i = intervention;
     const lignes = e.constats
@@ -2082,7 +2126,8 @@
       technicien: nomTechnicien(i, reglages) || 'Technicien SAV',
       fonction: valeur(t.fonction || (i.technicien && i.technicien.fonction) || (reglages && reglages.technicien && reglages.technicien.fonction) || 'Technicien SAV'),
       societe: valeur(reglages && reglages.societe && reglages.societe.nom) || 'BFR SYSTEMS',
-      debut: heureFr(i.chrono && i.chrono.debut), fin: heureFr(i.chrono && i.chrono.fin),
+      debut: (i.multiJours && (i.jours || []).length) ? valeur(i.jours[0].debut) : heureFr(i.chrono && i.chrono.debut),
+      fin: (i.multiJours && (i.jours || []).length) ? valeur(i.jours[i.jours.length - 1].fin) : heureFr(i.chrono && i.chrono.fin),
       duree: formatDuree(e.duree) || '—',
       nbEvenements: String(e.evenements.length),
       nbTravaux: String(e.travaux.length), nbConstats: String(e.constats.length),
@@ -2378,7 +2423,8 @@
     objetMailSAV: objetMailSAV, corpsMailSAV: corpsMailSAV,
     corpsMailBilingue: corpsMailBilingue, texteSMSArrivee: texteSMSArrivee,
     infoMachinePiece: infoMachinePiece,
-    estTravail: estTravail, travauxDe: travauxDe, travauxTermines: travauxTermines, titreRapport: titreRapport, canevasRapport: canevasRapport,
+    estTravail: estTravail, travauxDe: travauxDe, travauxTermines: travauxTermines,
+    jourDepuisChrono: jourDepuisChrono, pourRapport: pourRapport, dateLocale: dateLocale, titreRapport: titreRapport, canevasRapport: canevasRapport,
     mentionEvenement: mentionEvenement, RESULTATS: RESULTATS, TYPES_INTERVENTION: TYPES_INTERVENTION,
     COULEUR_TRAVAIL: COULEUR_TRAVAIL,
     nomComplet: nomComplet, contactTech: contactTech, nomTechnicien: nomTechnicien

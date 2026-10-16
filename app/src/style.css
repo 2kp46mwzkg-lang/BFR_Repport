@@ -1156,6 +1156,21 @@ input:focus, select:focus, textarea:focus {
   background: var(--f, #dcfce7);
 }
 
+/* Chrono resté lancé depuis un jour précédent */
+.chrono-oubli {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  font-size: 12.5px;
+}
+
 /* Témoin « À l'écoute » pendant la dictée */
 .dictee-active {
   display: flex;

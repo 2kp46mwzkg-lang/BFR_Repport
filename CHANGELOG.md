@@ -1,3 +1,35 @@
+# Chrono sur plusieurs jours et annuaire — 16/10/2026
+
+## Chrono : une journée par jour
+- **Pause le soir, « Reprendre » le lendemain** : la journée de la veille s'arrête au début
+  de la pause et rejoint le relevé des journées ; une nouvelle journée commence à la reprise.
+  Avant, tout restait dans le même jour (de 8 h le lundi à 17 h le mardi).
+- **« Terminer » puis « Reprendre »** : nouveau bouton après « Terminer ».
+  - le même jour (pause déjeuner, aller-retour à l'atelier) : l'interruption est déduite
+    comme une pause, on reste sur une seule journée ;
+  - un autre jour : la journée précédente rejoint le relevé et le **jour 2** commence.
+- **Chrono oublié la veille** : bandeau « Chrono lancé le … et jamais arrêté » ; « Corriger »
+  (ou « Terminer » / « Pause ») demande l'heure de fin de cette journée et l'heure de reprise
+  du jour. Un bouton permet de garder un travail continu (travail de nuit).
+- Pendant une journée, le chrono affiche « Jour N — sur site depuis … », le temps de la
+  journée, les jours précédents et le cumul. Le rapport (PDF, Word, e-mail) liste toutes les
+  journées, celle en cours comprise (« en cours »), et le total cumulé.
+- Une pause en cours n'est plus comptée comme du temps sur site ; une journée saisie à la
+  main qui passe minuit (travail de nuit) est bien calculée.
+- La date du jour est prise à l'heure française (entre minuit et 2 h, c'était la veille).
+
+## Annuaire clients
+- La **recherche** ne referme plus le clavier de l'iPhone à chaque lettre (le champ était
+  redessiné à chaque frappe).
+- **Client à plusieurs contacts** : « Modifier » ouvre bien le contact de la carte (avant,
+  toujours le premier contact du client) ; modifier un contact n'efface plus les
+  modifications faites sur un autre ; renommer un contact ne crée pas de doublon.
+- Nouveau bouton **« Ajouter un autre contact pour ce client »**.
+- Les **notes / autres contacts** saisis dans l'annuaire sont enfin enregistrés.
+- Modifier un autre contact du client de l'intervention en cours ne remplace plus le contact
+  de l'intervention (seuls adresse, lieu, logo et notes sont mis à jour).
+- Message clair si l'enregistrement échoue (mémoire du navigateur pleine).
+
 # « Liste trop lourde » — 16/10/2026
 
 - **Cause :** la liste clients était enregistrée dans le localStorage du navigateur, limité
