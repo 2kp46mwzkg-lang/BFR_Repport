@@ -124,6 +124,7 @@
     }
 
     let dbPromise = null;
+    let ouverte = false;   // base réellement ouverte (et non simplement présente)
     function ouvrirDB() {
       if (!estDispo()) return Promise.resolve(null);
       if (dbPromise) return dbPromise;
@@ -140,6 +141,7 @@
             }
           };
           req.onsuccess = function (e) {
+            ouverte = true;
             resolve(e.target.result);
           };
           req.onerror = function () {
@@ -509,6 +511,7 @@
 
     return {
       disponible: estDispo,
+      estOuverte: function () { return ouverte; },
       sauverRapport,
       getRapport,
       tousLesRapports,
@@ -829,9 +832,15 @@
         }
         const liste = Store.get(K.rapports, []);
         const presents = await RapportDB.idsRapports();
+        let toutEnBase = RapportDB.estOuverte();
         for (const rep of liste) {
-          if (rep && rep.id && !presents.has(rep.id)) await RapportDB.sauverRapport(rep);
+          if (rep && rep.id && !presents.has(rep.id)) {
+            if (!(await RapportDB.sauverRapport(rep))) toutEnBase = false;
+          }
         }
+        /* Tout l'historique est dans la base : la copie du localStorage est allégée
+           (photos retirées), ce qui libère la place prise par les anciennes versions. */
+        if (toutEnBase) ecrireHistoriqueLocal(liste);
       } catch (e) {
         console.warn('Initialisation stockage:', e);
       }
@@ -872,6 +881,25 @@
   }, 2500);
 
   let dirty = false, saveTimer;
+  /* Copie de secours de l'historique dans le localStorage. Quand la base IndexedDB
+     est ouverte (elle garde les rapports ET leurs photos), cette copie est faite
+     SANS les photos : avec elles, elle remplissait les 5 Mo du localStorage et plus
+     rien d'autre ne pouvait y être enregistré (réglages, fiches clients…). */
+  function sansPhotos(r) {
+    const c = JSON.parse(JSON.stringify(r));
+    c.evenements = (c.evenements || []).map(e => Object.assign({}, e, {
+      photos: (e.photos || []).map(p => ({ id: p.id, legende: p.legende || '', annotations: p.annotations || [], dataUrl: '' }))
+    }));
+    c.photosLibres = (c.photosLibres || []).map(p => ({
+      id: p.id, legende: p.legende || '', annotations: p.annotations || [], dataUrl: ''
+    }));
+    return c;
+  }
+  function ecrireHistoriqueLocal(liste) {
+    const base = typeof RapportDB !== 'undefined' && RapportDB.estOuverte && RapportDB.estOuverte();
+    return Store.set(K.rapports, base ? liste.map(sansPhotos) : liste);
+  }
+
   function sauver(silencieux) {
     synchroniserEntites();
     R.maj = new Date().toISOString();
@@ -902,7 +930,7 @@
     if (i >= 0) liste[i] = R; else liste.unshift(R);
     if (liste.length > 40) liste.length = 40;
 
-    let ok2 = Store.set(K.rapports, liste);
+    let ok2 = ecrireHistoriqueLocal(liste);
     if (!ok2) {
       // Si le localStorage sature (quota 5 Mo dépassé), on allège la copie de secours du localStorage
       // tout en conservant les identifiants et métadonnées de photos.
@@ -4312,7 +4340,7 @@
                     const idx = existants.findIndex(x => x.id === rep.id);
                     if (idx >= 0) existants[idx] = rep; else existants.unshift(rep);
                   });
-                  Store.set(K.rapports, existants);
+                  ecrireHistoriqueLocal(existants);
                 }
 
                 const rapActif = d.rapport || (!listeRapports && (d.id || d.numero || d.evenements) ? d : null);

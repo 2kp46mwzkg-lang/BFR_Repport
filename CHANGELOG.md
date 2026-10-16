@@ -1,3 +1,19 @@
+# « Liste trop lourde » — 16/10/2026
+
+- **Cause :** la liste clients était enregistrée dans le localStorage du navigateur, limité
+  à environ 5 Mo et **partagé** avec les rapports. Or l'appli y gardait aussi une copie
+  de secours de l'historique **avec toutes les photos** : sur un téléphone qui a déjà servi,
+  ces 5 Mo étaient pleins, et une liste de quelques centaines de Ko ne rentrait plus.
+- La liste clients (et celle des techniciens) est maintenant rangée dans la base
+  **IndexedDB** du navigateur, comme les rapports et les photos : plus de limite de 5 Mo.
+  Une liste déjà chargée par une ancienne version y est déplacée automatiquement.
+- La copie de secours de l'historique dans le localStorage est faite **sans les photos**
+  (elles sont dans la base IndexedDB) : les Mo libérés servent de nouveau aux réglages et
+  aux fiches clients, qui pouvaient eux aussi ne plus s'enregistrer.
+- Les **logos** lourds du classeur sont réduits à 400 px à l'import (un logo de 4 Mo
+  devient ~50 Ko) au lieu d'être écartés au-delà de 400 Ko.
+- Message d'erreur plus juste si l'enregistrement échoue malgré tout (navigation privée).
+
 # Nouvelle présentation du classeur clients — 15/10/2026
 
 - Le classeur avec **une ligne par contact** s'importe : colonnes **Client, Titre, Nom,

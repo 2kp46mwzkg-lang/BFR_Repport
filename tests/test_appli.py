@@ -230,6 +230,10 @@ async def test_photos_conservees(nav, adresse):
         rq.onsuccess = () => res(rq.result.map(r => JSON.stringify(r).length)); };
     })''')
     verifier(tailles and max(tailles) < 100000, 'rapports en base trop lourds (photos non séparées) : %s' % tailles)
+    # copie de secours de l'historique (localStorage) sans les photos : elle ne remplit plus les 5 Mo
+    await t.pg.wait_for_timeout(1200)
+    photos_locales = await t.pg.evaluate('''() => (localStorage["sav3.rapports"] || "").split("data:image/jpeg").length - 1''')
+    verifier(photos_locales == 0, 'l\'historique du localStorage contient encore %d photo(s)' % photos_locales)
     await t.fermer()
     return t
 
@@ -611,7 +615,7 @@ async def test_import_clients(nav, adresse):
     await t.menu('reglages')
     await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-exemple.xlsx'))
     await pg.wait_for_timeout(1500)
-    liste = await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]")')
+    liste = await pg.evaluate('() => Clients.base()')
     noms = [c['nom'] for c in liste]
     verifier(noms == ['FROMAGERIE DU JURA', 'LAITERIE DES ALPES', 'BISCUITERIE NORD', 'CONSERVERIE ÉTÉ'],
              'clients du classeur mal lus : %s' % noms)
@@ -659,7 +663,7 @@ async def test_import_clients(nav, adresse):
     await t.menu('reglages')
     await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-contacts-exemple.xlsx'))
     await pg.wait_for_timeout(1500)
-    liste = await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]")')
+    liste = await pg.evaluate('() => Clients.base()')
     vus = [(c['nom'], c['contact']) for c in liste]
     verifier(vus == [('FROMAGERIE DU JURA', 'M. Paul MARTIN'), ('FROMAGERIE DU JURA', 'Mme Sophie LEROY'),
                      ('LAITERIE DES ALPES', 'Mme Julie BERNARD'), ('NOUVEAU CLIENT SA', 'M. Luc PETIT')],
@@ -698,13 +702,36 @@ async def test_import_clients(nav, adresse):
     await t.menu('reglages')
     await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-exemple-excel.csv'))
     await pg.wait_for_timeout(1000)
-    noms = await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]").map(c => c.nom)')
+    noms = await pg.evaluate('() => Clients.base().map(c => c.nom)')
     verifier('CONSERVERIE ÉTÉ' in noms and len(noms) == 4, 'CSV Excel (accents) mal lu : %s' % noms)
+    # 3 bis. mémoire du navigateur (localStorage) pleine : l'import passe quand même
+    #        (la liste est rangée dans IndexedDB) et elle est retrouvée après rechargement
+    await pg.evaluate('''() => {
+      let i = 0;
+      for (const taille of [262144, 16384, 1024, 64, 1]) {   // rempli jusqu'au dernier caractère
+        const bloc = "x".repeat(taille);
+        try { for (;;) localStorage.setItem("remplissage_" + (i++), bloc); } catch (e) {}
+      }
+      return i; }''')
+    await t.menu('reglages')
+    await pg.set_input_files('#clientsImport', os.path.join(DONNEES, 'clients-contacts-exemple.xlsx'))
+    await pg.wait_for_timeout(1500)
+    contacts = await pg.evaluate('() => Clients.base().map(c => c.contact)')
+    verifier('Mme Sophie LEROY' in contacts, 'import refusé quand le localStorage est plein : %s' % contacts)
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(800)
+    noms = await pg.evaluate('async () => { await Clients.pret; return Clients.base().map(c => c.contact); }')
+    verifier('Mme Sophie LEROY' in noms, 'liste perdue après rechargement : %s' % noms)
+    await pg.evaluate('''() => Object.keys(localStorage).filter(k => k.indexOf("remplissage_") === 0)
+      .forEach(k => localStorage.removeItem(k))''')
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(800)
+    await t.fermer_feuilles()
     # 4. un fichier qui n'est pas une liste : message, liste conservée
     await t.menu('reglages')
     await pg.set_input_files('#clientsImport', os.path.join(PHOTOS, 'portrait.jpg'))
     await pg.wait_for_timeout(1000)
-    verifier(len(await pg.evaluate('() => JSON.parse(localStorage.getItem("sav3.clientsListe") || "[]")')) == 4,
+    verifier(len(await pg.evaluate('() => Clients.base()')) == 4,
              'une image ne doit pas remplacer la liste clients')
     await t.fermer()
     return t

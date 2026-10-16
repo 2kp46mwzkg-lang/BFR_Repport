@@ -158,21 +158,33 @@
       delete memo[norm(nom)];
       try { global.localStorage.setItem(CLE_MEMO, JSON.stringify(memo)); } catch (e) {}
     },
-    /* ---------- Remplacement complet de la liste (import CSV/JSON) --------- */
+    /* ---------- Remplacement complet de la liste (import) ------------------ */
     /* Le technicien peut charger la dernière version du classeur sans
-       reconstruire l'application : le contenu est conservé dans le téléphone. */
-    importer: function (texte, surMesure, aUnProbleme) {
+       reconstruire l'application : le contenu est conservé dans le téléphone.
+       La liste est rangée dans la base IndexedDB du navigateur (place quasi
+       illimitée) : le localStorage, limité à 5 Mo et partagé avec les rapports en
+       cours, était souvent déjà plein — d'où « liste trop lourde » dès quelques
+       centaines de Ko. Le localStorage ne sert plus que de secours.
+       Renvoie une promesse : nombre de fiches enregistrées (0 = échec). */
+    importer: async function (texte) {
       const lignes = Array.isArray(texte) ? texte : this.analyser(texte);
-      if (!lignes.length) { if (aUnProbleme) aUnProbleme(); return 0; }
-      try {
-        global.localStorage.setItem('sav3.clientsListe', JSON.stringify(lignes));
-        global.CLIENTS_BFR = lignes;              // prise en compte immédiate
-        if (lignes.techniciens && lignes.techniciens.length) {
-          global.localStorage.setItem('sav3.techniciensListe', JSON.stringify(lignes.techniciens));
-          global.TECHNICIENS_BFR = lignes.techniciens;
-        }
-      } catch (e) { return 0; }
-      if (surMesure) surMesure(lignes.length);
+      if (!lignes.length) return 0;
+      const techniciens = (lignes.techniciens && lignes.techniciens.length) ? lignes.techniciens : null;
+      const donnees = { clients: lignes.slice(), techniciens: techniciens || (Array.isArray(global.TECHNICIENS_BFR) ? global.TECHNICIENS_BFR : []), maj: new Date().toISOString() };
+      let ok = await BaseClients.ecrire('liste', donnees);
+      if (ok) {
+        // la copie de l'ancienne version est retirée du localStorage : elle y prenait de la place
+        try { global.localStorage.removeItem('sav3.clientsListe'); global.localStorage.removeItem('sav3.techniciensListe'); } catch (e) {}
+      } else {
+        try {
+          global.localStorage.setItem('sav3.clientsListe', JSON.stringify(lignes));
+          if (techniciens) global.localStorage.setItem('sav3.techniciensListe', JSON.stringify(techniciens));
+          ok = true;
+        } catch (e) { ok = false; }
+      }
+      if (!ok) return 0;
+      global.CLIENTS_BFR = lignes;                // prise en compte immédiate
+      if (techniciens) global.TECHNICIENS_BFR = techniciens;
       return lignes.length;
     },
     listeImportee: function () {
@@ -360,8 +372,8 @@
       // adresses et logos de la liste déjà chargée, pour les clients du nouveau fichier qui n'en ont pas
       const completes = this.completerDepuis(lignes, this.base());
       const nbClients = new Set(lignes.map(c => norm(c.nom))).size;
-      const n = this.importer(lignes);
-      if (!n) return { n: 0, erreur: 'Liste trop lourde pour la mémoire du téléphone' };
+      const n = await this.importer(lignes);
+      if (!n) return { n: 0, erreur: 'Enregistrement impossible : la mémoire du navigateur est pleine ou bloquée (navigation privée ?)' };
       return { n: n, clients: nbClients, contacts: lignes.presentation === 'contacts' ? n : 0, completes: completes,
         logos: lignes.filter(c => /^data:image\//.test(c.logo || '')).length,
         techniciens: (lignes.techniciens || []).length };
@@ -561,6 +573,86 @@
     return out.subarray(0, o);
   }
 
+  /* Réduit une image (dataURL) à « max » pixels de côté, sur fond blanc (JPEG). */
+  function reduireLogo(dataUrl, max) {
+    return new Promise(function (resolve) {
+      try {
+        const img = new Image();
+        img.onload = function () {
+          try {
+            const r = Math.min(1, max / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round((img.naturalWidth || img.width) * r));
+            c.height = Math.max(1, Math.round((img.naturalHeight || img.height) * r));
+            const x = c.getContext('2d');
+            x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+            x.drawImage(img, 0, 0, c.width, c.height);
+            const petit = c.toDataURL('image/jpeg', 0.88);
+            resolve(petit.length < dataUrl.length ? petit : dataUrl);
+          } catch (e) { resolve(dataUrl); }
+        };
+        img.onerror = function () { resolve(dataUrl); };
+        img.src = dataUrl;
+      } catch (e) { resolve(dataUrl); }
+    });
+  }
+
+  /* Base IndexedDB de la liste clients (séparée de celle des rapports). */
+  const BaseClients = {
+    ouvrir: function () {
+      if (this._p) return this._p;
+      this._p = new Promise(function (resolve) {
+        try {
+          if (!global.indexedDB) { resolve(null); return; }
+          const req = global.indexedDB.open('bfr_sav_clients', 1);
+          req.onupgradeneeded = function () {
+            if (!req.result.objectStoreNames.contains('listes')) req.result.createObjectStore('listes');
+          };
+          req.onsuccess = function () { resolve(req.result); };
+          req.onerror = function () { resolve(null); };
+          req.onblocked = function () { resolve(null); };
+        } catch (e) { resolve(null); }
+      });
+      return this._p;
+    },
+    lire: async function (cle) {
+      const db = await this.ouvrir();
+      if (!db) return null;
+      return new Promise(function (resolve) {
+        try {
+          const r = db.transaction(['listes'], 'readonly').objectStore('listes').get(cle);
+          r.onsuccess = function () { resolve(r.result || null); };
+          r.onerror = function () { resolve(null); };
+        } catch (e) { resolve(null); }
+      });
+    },
+    ecrire: async function (cle, valeur) {
+      const db = await this.ouvrir();
+      if (!db) return false;
+      return new Promise(function (resolve) {
+        try {
+          const tx = db.transaction(['listes'], 'readwrite');
+          tx.objectStore('listes').put(valeur, cle);
+          tx.oncomplete = function () { resolve(true); };
+          tx.onerror = function () { resolve(false); };
+          tx.onabort = function () { resolve(false); };
+        } catch (e) { resolve(false); }
+      });
+    },
+    effacer: async function (cle) {
+      const db = await this.ouvrir();
+      if (!db) return false;
+      return new Promise(function (resolve) {
+        try {
+          const tx = db.transaction(['listes'], 'readwrite');
+          tx.objectStore('listes').delete(cle);
+          tx.oncomplete = function () { resolve(true); };
+          tx.onerror = function () { resolve(false); };
+        } catch (e) { resolve(false); }
+      });
+    }
+  };
+
   const Classeur = {
     /* b : Uint8Array du .xlsx → { lignes: [[cellules], …], logos: { n° de ligne: dataURL } } */
     lire: async function (b) {
@@ -651,10 +743,12 @@
           const ligne = parseInt(r.textContent, 10) + 1;
           if (logos[ligne]) continue;
           const octets = await Zip.extraire(arch[media]);
-          if (octets.length > 400000) continue;   // logo trop lourd pour la mémoire du téléphone
+          if (octets.length > 8000000) continue;   // image hors norme : ce n'est pas un logo
           let bin = '';
           for (let k = 0; k < octets.length; k += 0x8000) bin += String.fromCharCode.apply(null, octets.subarray(k, k + 0x8000));
-          logos[ligne] = 'data:image/' + ext.toLowerCase().replace('jpg', 'jpeg') + ';base64,' + btoa(bin);
+          const image = 'data:image/' + ext.toLowerCase().replace('jpg', 'jpeg') + ';base64,' + btoa(bin);
+          // un logo lourd est ramené à 400 px : bien assez pour l'en-tête du rapport
+          logos[ligne] = octets.length > 60000 ? await reduireLogo(image, 400) : image;
         }
       }
       return { lignes: lignes, logos: logos };
@@ -681,11 +775,30 @@
   })();
   if (Array.isArray(techniciensSauves) && techniciensSauves.length) global.TECHNICIENS_BFR = techniciensSauves;
 
+  /* Au démarrage, la liste rangée dans IndexedDB remplace celle du localStorage ;
+     une liste encore dans le localStorage (ancienne version) y est déplacée, ce qui
+     libère de la place pour les rapports. Clients.pret : promesse de fin de chargement. */
+  Clients.pret = (async function () {
+    const d = await BaseClients.lire('liste');
+    if (d && Array.isArray(d.clients) && d.clients.length && !illisible(d.clients)) {
+      global.CLIENTS_BFR = d.clients;
+      if (Array.isArray(d.techniciens) && d.techniciens.length) global.TECHNICIENS_BFR = d.techniciens;
+      return d.clients.length;
+    }
+    if (global.CLIENTS_BFR !== CLIENTS_EMBARQUES && Array.isArray(global.CLIENTS_BFR) && global.CLIENTS_BFR.length) {
+      const ok = await BaseClients.ecrire('liste', { clients: global.CLIENTS_BFR,
+        techniciens: Array.isArray(global.TECHNICIENS_BFR) ? global.TECHNICIENS_BFR : [], maj: new Date().toISOString() });
+      if (ok) { try { global.localStorage.removeItem('sav3.clientsListe'); global.localStorage.removeItem('sav3.techniciensListe'); } catch (e) {} }
+    }
+    return (global.CLIENTS_BFR || []).length;
+  })();
+
   Clients.revenirListeOrigine = function () {
     try {
       global.localStorage.removeItem('sav3.clientsListe');
       global.localStorage.removeItem('sav3.techniciensListe');
     } catch (e) {}
+    BaseClients.effacer('liste');
     global.CLIENTS_BFR = CLIENTS_EMBARQUES;
     global.TECHNICIENS_BFR = TECHNICIENS_EMBARQUES;
   };
