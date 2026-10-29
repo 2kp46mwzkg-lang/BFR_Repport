@@ -1,3 +1,43 @@
+# Balayage complet (bugs et ergonomie) — 29/10/2026
+
+Revue de toute l'application, dans les deux rôles, à 320, 390 et 1280 px de large.
+
+**Fiches du responsable SAV**
+- **Liens reçus abîmés par la messagerie** : un lien réécrit par Outlook (« safelinks »,
+  caractères encodés) ou coupé sur deux lignes est maintenant reconnu ; les navigateurs
+  sans décompression intégrée utilisent celle de l'application.
+- **Contenu du lien vérifié** à la réception : textes, langue, date, pièces et machines
+  nettoyés ; une valeur incohérente ne peut plus bloquer l'écran ni la création.
+- **E-mail trop long** : au-delà de ce que la messagerie accepte, le message envoyé est
+  raccourci (le lien et l'essentiel restent ; le détail est dans la fiche) et le message
+  complet est copié en même temps, pour le coller si besoin.
+- **Envoi plus rapide et fiable sur iPhone** : le lien est préparé pendant la saisie, la
+  copie se fait dans le toucher (exigé par Safari) ; une erreur de partage est signalée.
+- **Propositions de techniciens** : un choix remplace toute la fiche (un ancien e-mail ne
+  reste plus), le destinataire et les techniciens déjà dans la fiche ne sont plus reproposés.
+- **Fiches de l'ancien format** : les collègues saisis en texte libre sont repris en fiches.
+- Une fiche avec seulement le technicien renseigné n'est plus jetée en passant à la suivante ;
+  « Mémoire pleine » signalé au lieu d'un échec silencieux ; le logo du client ne voyage plus
+  dans la fiche (lien plus court).
+- « Copier la fiche » côté technicien recopie exactement le lien reçu.
+
+**Formations**
+- Les **opérateurs formés** sont comptés une seule fois même s'ils ont suivi plusieurs
+  sessions (synthèse, PDF, Word, variables d'e-mail).
+- Un **sujet retiré de la liste** reste dans la formation (il était effacé).
+- **Horaires incohérents** (fin avant le début, plus de 12 h) signalés dans le bilan.
+- Un sujet unique trop long pour le bandeau est imprimé en entier dans la fiche de session.
+- Les formations ne faussent plus la répartition des travaux par domaine.
+
+**Ergonomie**
+- **Pièces** : tableau remplacé par des cartes lisibles sur téléphone (photo, quantité,
+  référence, machine, boutons Modifier / Supprimer toujours visibles).
+- **Assistant** : barre du bas qui tient sur les petits écrans (Supprimer en icône),
+  date et horaires de formation lisibles à 320 px, bilan mieux réparti.
+- Aucun débordement horizontal à 320 px (évènements, formations, pieds de cartes).
+- Bouton « Horodater » sans effet retiré ; annuaire vide expliqué (comment importer) ;
+  aide et réglages adaptés au rôle (technicien ou responsable SAV).
+
 # Fiches d'intervention préparées par le responsable SAV — 29/10/2026
 
 Le responsable SAV prépare l'intervention, le technicien la reçoit prête.
@@ -8,8 +48,12 @@ Le responsable SAV prépare l'intervention, le technicien la reçoit prête.
 - **Responsable SAV** : un écran « Fiche d'intervention à préparer » :
   - client (annuaire), contact, adresse, lieu, machine(s), date prévue, type, objet, langue ;
   - **pièces à emporter** (dénomination, référence, quantité, machine) ;
-  - technicien destinataire et son e-mail (les derniers utilisés sont proposés), autres
-    techniciens prévus, **consignes** (accès, EPI, contact à l'arrivée…) ;
+  - **fiches techniciens complètes**, comme les collègues sur site : le destinataire et
+    « + Ajouter un technicien sur site », chacun avec nom, fonction / spécialité, téléphone
+    et e-mail. Les fiches déjà saisies (et la liste des techniciens BFR) sont proposées dès
+    les premières lettres du nom et remplissent toute la fiche ; les techniciens qui ont un
+    e-mail reçoivent la fiche en copie ;
+  - **consignes** (accès, EPI, contact à l'arrivée…) ;
   - **Envoyer par e-mail** (message tout prêt avec le résumé et le lien), **Copier le
     lien**, **Copier le message**, **Partager** ; liste des **fiches préparées** (rouvrir,
     modifier, renvoyer).
@@ -18,7 +62,8 @@ Le responsable SAV prépare l'intervention, le technicien la reçoit prête.
   700 caractères pour une fiche courante.
 - **Technicien** : en touchant le lien, l'application présente la fiche reçue
   (client, machine, date, pièces à emporter, consignes) puis **crée l'intervention
-  pré-remplie** : client, machines, type, objet, date prévue, collègues, pièces, consignes
+  pré-remplie** : client, machines, type, objet, date prévue, collègues (avec leur fonction,
+  téléphone et e-mail ; un collègue en copie retrouve le destinataire en collègue), pièces, consignes
   (rappelées en tête de l'intervention). L'intervention en cours reste dans l'historique.
   Une fiche reçue reste à l'écran tant qu'elle n'est pas utilisée ; un lien déjà utilisé est
   signalé.

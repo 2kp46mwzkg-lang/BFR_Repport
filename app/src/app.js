@@ -796,7 +796,7 @@
       travauxTermines: '', faitLe: todayISO(),
       signatureClient: { nom: '', fonction: '', dataUrl: '', date: '', heure: '' },
       // responsable SAV : technicien destinataire de la fiche, collègues prévus, consignes
-      envoi: { nom: '', email: '', autres: '', consignes: '', envoyeeLe: '' }
+      envoi: { nom: '', fonction: '', tel: '', email: '', equipe: [], consignes: '', envoyeeLe: '' }
     };
   }
 
@@ -897,7 +897,8 @@
   function rapportVierge(r) {
     return !!r && !(r.evenements || []).length && !(r.photosLibres || []).length && !(r.pieces || []).length
       && !(r.client && r.client.nom) && !(r.chrono && r.chrono.debut) && !(r.jours || []).length && !r.objet && !r.actions && !r.aPrevoir
-      && !(r.signatureClient && r.signatureClient.dataUrl);
+      && !(r.signatureClient && r.signatureClient.dataUrl)
+      && !(r.envoi && (r.envoi.nom || r.envoi.email || r.envoi.consignes || (r.envoi.equipe || []).length));
   }
 
   /* Stockage permanent : sans cette demande, Android peut effacer les données de
@@ -959,10 +960,16 @@
       const liste = Store.get(K.rapports, []).filter(x => x && x.id !== R.id);
       if (!rapportVierge(R)) liste.unshift(JSON.parse(JSON.stringify(R)));
       if (liste.length > 80) liste.length = 80;
-      Store.set(K.rapports, liste);
+      let okListe = Store.set(K.rapports, liste);
+      if (!okListe) {
+        // mémoire pleine : logos retirés (ils ne voyagent pas dans les fiches), puis les plus anciennes
+        liste.forEach(x => { if (x.client) x.client.logo = ''; });
+        okListe = Store.set(K.rapports, liste) || Store.set(K.rapports, liste.slice(0, 30));
+      }
       dirty = false;
-      if (!silencieux) toast(ok ? 'Enregistré' : 'Mémoire pleine');
-      return ok;
+      if (!ok || !okListe) toast('Mémoire de l\'appareil pleine : supprimez des fiches préparées anciennes', 5000);
+      else if (!silencieux) toast('Enregistré');
+      return ok && okListe;
     }
 
     // 1. Persistance intégrale dans IndexedDB (aucun quota de 5 Mo, 100 % des photos conservées)
@@ -1031,7 +1038,10 @@
     if (!silencieux) toast('Enregistré');
     return true;
   }
-  function planifier() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(() => sauver(true), 800); }
+  function planifier() {
+    dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(() => sauver(true), 800);
+    if (RSAV) preparerLienFiche();
+  }
 
   /* ===================== Chronomètre ================================== */
   let tic = null;
@@ -1571,56 +1581,34 @@
       <div class="piece-choix-ligne">${bouton('laissee', '✓ Laissée sur site')}${bouton('rapportee', '↩ Rapportée')}</div></div>`;
   }
 
+  /* Pièces en cartes : sur téléphone, toutes les informations et les boutons restent
+     visibles (l'ancien tableau débordait et cachait « Modifier » / « Supprimer »). */
   function rendreTableauPieces() {
     const pcs = R.pieces || [];
     if (!pcs.length) {
       return '<p class="small" style="font-style:italic;color:var(--gris);padding:4px 0">' +
         (RSAV ? 'Aucune pièce à emporter pour l\'instant.' : 'Aucune pièce de rechange enregistrée pour cette intervention.') + '</p>';
     }
-    // responsable SAV : pas de photo (elle ne voyage pas dans le lien de la fiche)
-    const colPhoto = !RSAV;
-    return `<div style="overflow-x:auto;margin:6px 0">
-      <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--bord);border-radius:8px;overflow:hidden">
-        <thead>
-          <tr style="background:#f8fafc;border-bottom:1.5px solid var(--bord);text-align:left;color:var(--gris)">
-            ${colPhoto ? '<th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;width:48px;text-align:center">Photo</th>' : ''}
-            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Dénomination</th>
-            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Référence</th>
-            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Machine (N° série)</th>
-            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;text-align:center">Qté</th>
-            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;text-align:right">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${pcs.map((p, idx) => {
-            const mInfo = (typeof Report !== 'undefined' && Report.infoMachinePiece)
-              ? Report.infoMachinePiece(p, R)
-              : { serie: p.machineSerie || '', designation: p.machineNom || '' };
-            return `
-            <tr style="border-bottom:1px solid var(--bord);background:${p.prevue && p.statut === 'rapportee' ? '#f8fafc' : (idx % 2 === 1 ? '#fcfdff' : '#fff')}" class="${p.prevue && p.statut === 'rapportee' ? 'piece-rapportee' : ''}">
-              ${colPhoto ? `<td style="padding:6px 8px;text-align:center;vertical-align:middle">
-                ${p.photo
-                  ? `<button type="button" data-a="voir-photo-pc" data-id="${esc(p.id)}" style="background:none;border:none;padding:0;cursor:pointer;display:inline-block;vertical-align:middle" title="Agrandir la photo">
-                       <img src="${p.photo}" alt="${esc(p.denomination || 'pièce')}" style="width:38px;height:38px;object-fit:cover;border-radius:4px;border:1px solid var(--bord);display:block">
-                     </button>`
-                  : '<span style="color:#94a3b8;font-size:11px">—</span>'}
-              </td>` : ''}
-              <td style="padding:7px 9px;vertical-align:middle"><strong>${esc(p.denomination || '—')}</strong>${choixPiecePrevue(p)}</td>
-              <td style="padding:7px 9px;font-family:ui-monospace,monospace;color:#475569;vertical-align:middle">${esc(p.reference || '—')}</td>
-              <td style="padding:7px 9px;vertical-align:middle">
-                ${mInfo.serie ? `<div style="font-weight:600;color:var(--bleu,#0369a1);font-size:12.5px"><span style="font-size:10.5px;font-weight:normal;color:#64748b">N°</span> ${esc(mInfo.serie)}</div>` : ''}
-                ${mInfo.designation ? `<div style="font-size:11.5px;color:#334155">${esc(mInfo.designation)}</div>` : (!mInfo.serie ? '<span style="color:#94a3b8;font-size:11.5px">—</span>' : '')}
-              </td>
-              <td style="padding:7px 9px;text-align:center;vertical-align:middle"><strong>${esc(p.quantite || 1)}</strong></td>
-              <td style="padding:7px 9px;text-align:right;white-space:nowrap;vertical-align:middle">
-                <button type="button" class="btn sm grey" style="min-height:28px;padding:2px 7px;font-size:12px" data-a="editer-piece" data-id="${esc(p.id)}" title="Modifier">${(ICO.pen && ICO.pen(12)) || ''}</button>
-                <button type="button" class="btn sm danger" style="min-height:28px;padding:2px 7px;font-size:12px;margin-left:4px" data-a="supprimer-piece" data-id="${esc(p.id)}" title="Supprimer">${(ICO.trash && ICO.trash(12)) || ''}</button>
-              </td>
-            </tr>
-          `;}).join('')}
-        </tbody>
-      </table>
-    </div>`;
+    return `<div class="pieces-liste">${pcs.map(p => {
+      const mInfo = (typeof Report !== 'undefined' && Report.infoMachinePiece)
+        ? Report.infoMachinePiece(p, R)
+        : { serie: p.machineSerie || '', designation: p.machineNom || '' };
+      const machine = [mInfo.serie ? 'N° ' + mInfo.serie : '', mInfo.designation].filter(Boolean).join(' — ');
+      const rapportee = p.prevue && p.statut === 'rapportee';
+      return `<div class="piece-carte${rapportee ? ' piece-rapportee' : ''}">
+        ${!RSAV && p.photo ? `<button type="button" class="piece-photo" data-a="voir-photo-pc" data-id="${esc(p.id)}" title="Agrandir la photo">
+            <img src="${esc(p.photo)}" alt="${esc(p.denomination || 'pièce')}"></button>` : ''}
+        <div class="piece-info">
+          <div class="piece-nom"><strong>${esc(p.denomination || p.reference || '—')}</strong><span class="piece-qte">× ${esc(p.quantite || 1)}</span></div>
+          <div class="piece-detail">${p.reference ? 'Réf. <span class="piece-ref">' + esc(p.reference) + '</span>' : ''}${p.reference && machine ? ' · ' : ''}${esc(machine)}</div>
+          ${choixPiecePrevue(p)}
+        </div>
+        <div class="piece-actions">
+          <button type="button" class="btn sm grey" data-a="editer-piece" data-id="${esc(p.id)}" title="Modifier" aria-label="Modifier">${(ICO.pen && ICO.pen(14)) || '✎'}</button>
+          <button type="button" class="btn sm danger" data-a="supprimer-piece" data-id="${esc(p.id)}" title="Supprimer" aria-label="Supprimer">${(ICO.trash && ICO.trash(14)) || '✕'}</button>
+        </div>
+      </div>`;
+    }).join('')}</div>`;
   }
 
   function rendreContenuTrajet(tr) {
@@ -2556,7 +2544,7 @@
         R.client.fonction = c.fonction || '';
         R.client.tel = c.tel || '';
         R.client.email = c.email || '';
-        R.client.logo = c.logo || '';
+        R.client.logo = RSAV ? '' : (c.logo || '');     // le logo ne voyage pas dans la fiche
         R.client.numeroClient = c.numeroClient || '';
         R.client.noteContacts = c.autresContacts || '';
         R.client.langue = c.langue || '';
@@ -2670,7 +2658,6 @@
         </div>
         <div class="btnrow" style="margin-top:8px">
           <button class="btn grey" data-a="effacer">Effacer</button>
-          <button class="btn grey" data-a="horodater">Horodater</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -2688,7 +2675,6 @@
       if (!b) return;
       if (b.dataset.a === 'fermer') { pad.detacher(); overlay.remove(); }
       else if (b.dataset.a === 'effacer') pad.clear();
-      else if (b.dataset.a === 'horodater') toast('Horodatage : ' + new Date().toLocaleString('fr-FR'));
       else if (b.dataset.a === 'valider') {
         if (!pad.hasInk) { toast('La signature est vide'); return; }
         R.signatureClient.dataUrl = pad.dataUrl();
@@ -3821,7 +3807,8 @@
       <input type="${type || 'text'}" data-sk="${cle}" value="${esc(getPath(S, cle) || '')}" ${ph ? `placeholder="${esc(ph)}"` : ''}></div>`;
     Ouvrir.ouvrir(null, `<div class="panel">
       <div class="grab"></div><h3>Réglages</h3>
-      <p class="sub">À renseigner une fois par technicien. Ces informations n'apparaissent que dans vos rapports.</p>
+      <p class="sub">${RSAV ? 'Réglages de cet appareil : rôle, adresse de l\'application pour les liens des fiches, société.'
+        : 'À renseigner une fois par technicien. Ces informations n\'apparaissent que dans vos rapports.'}</p>
 
       <div class="card" id="cardRole"><h2>Rôle sur cet appareil</h2>
         <label class="role-choix"><input type="radio" name="role" value="technicien"${RSAV ? '' : ' checked'}>
@@ -4458,8 +4445,10 @@
                 </div>`;
             }).join('') : `
               <div style="text-align:center;padding:24px 12px;color:#64748b">
-                <p>Aucun client trouvé pour « ${esc(recherche)} »</p>
-                <button type="button" class="btn sm" data-a="creer-recherche" style="margin-top:8px">${(ICO.plus && ICO.plus(14)) || ''} Créer la fiche « ${esc(recherche)} »</button>
+                ${recherche.trim() ? `<p>Aucun client trouvé pour « ${esc(recherche)} »</p>
+                <button type="button" class="btn sm" data-a="creer-recherche" style="margin-top:8px">${(ICO.plus && ICO.plus(14)) || ''} Créer la fiche « ${esc(recherche)} »</button>`
+                : `<p>L'annuaire est vide pour l'instant.</p>
+                <p class="small">Importez la liste clients (Menu → Réglages → Liste clients) ou touchez « Nouveau client ».</p>`}
               </div>`;
       }
 
@@ -4726,34 +4715,80 @@
       }
       return 'j' + b64url(octets);       // navigateur sans compression : lien plus long, même contenu
     }
-    /* Le code d'une fiche dans un texte collé (lien entier, message, ou code seul). */
-    function codeDans(texte) {
-      const m = /fiche=([zj][A-Za-z0-9_-]{8,})/.exec(String(texte || ''));
-      if (m) return m[1];
-      const seul = String(texte || '').trim();
-      return /^[zj][A-Za-z0-9_-]{8,}$/.test(seul) ? seul : '';
+    /* Codes de fiche possibles dans un texte collé (lien entier, message, ou code seul) :
+       lien encodé par la messagerie (« %23fiche%3D », liens protégés d'Outlook), ou
+       coupé en fin de ligne (morceaux suivants recollés, du plus court au plus long). */
+    function codesDans(texte) {
+      let t = String(texte || '');
+      if (/fiche%3D/i.test(t)) { try { t = decodeURIComponent(t); } catch (_) {} }
+      const out = [];
+      const m = /fiche=([zj][A-Za-z0-9_-]{8,})/.exec(t);
+      if (m) {
+        out.push(m[1]);
+        const suite = t.slice(m.index + 6 + m[1].length).split(/\s+/).slice(1, 7);
+        let joint = m[1];
+        for (const morceau of suite) {
+          const debut = /^[A-Za-z0-9_-]+/.exec(morceau);
+          if (!debut) break;
+          joint += debut[0];
+          out.push(joint);
+          if (debut[0].length !== morceau.length) break;
+        }
+      } else {
+        const seul = t.trim();
+        if (/^[zj][A-Za-z0-9_-]{8,}$/.test(seul)) out.push(seul);
+      }
+      return out;
     }
-    async function decoder(texte, sansFlux) {
-      const code = codeDans(texte);
-      if (!code) throw new Error('code');
+    function codeDans(texte) { return codesDans(texte)[0] || ''; }
+    async function decoderCode(code, sansFlux) {
       let octets = deB64url(code.slice(1));
       if (code[0] === 'z') {
+        let fait = false;
+        // DecompressionStream sans « deflate-raw » (anciens navigateurs) : décompresseur de l'appli
         if (!sansFlux && typeof DecompressionStream === 'function') {
-          const flux = new Blob([octets]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-          octets = new Uint8Array(await new Response(flux).arrayBuffer());
-        } else {
-          octets = Clients._inflate(octets, octets.length * 6);
+          try {
+            const flux = new Blob([octets]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+            octets = new Uint8Array(await new Response(flux).arrayBuffer());
+            fait = true;
+          } catch (_) {}
         }
+        if (!fait) octets = Clients._inflate(octets, octets.length * 6);
       }
-      const f = JSON.parse(new TextDecoder().decode(octets));
-      if (!f || f.t !== 'fiche-bfr' || !f.id) throw new Error('format');
-      f.client = f.client || {};
-      f.machines = Array.isArray(f.machines) ? f.machines : [];
-      f.pieces = Array.isArray(f.pieces) ? f.pieces : [];
-      f.techniciens = Array.isArray(f.techniciens) ? f.techniciens : [];
-      f.par = f.par || {};
-      f.pour = f.pour || {};
-      return f;
+      return JSON.parse(new TextDecoder().decode(octets));
+    }
+    /* Une fiche vient d'un lien : chaque champ est vérifié (texte, liste, objet). */
+    function nettoyer(f) {
+      const txt = (v) => (typeof v === 'string' || typeof v === 'number') ? String(v) : '';
+      const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+      const liste = (v) => (Array.isArray(v) ? v : []);
+      const champs = (o, cles) => { const r = {}; cles.forEach(k => { r[k] = txt(obj(o)[k]); }); return r; };
+      const TECH = ['nom', 'fonction', 'tel', 'email'];
+      const langue = txt(f.langue);
+      return {
+        t: 'fiche-bfr', v: f.v, id: txt(f.id), cree: txt(f.cree), _code: txt(f._code),
+        par: champs(f.par, TECH), pour: champs(f.pour, TECH),
+        techniciens: liste(f.techniciens).map(t => (typeof t === 'string' ? { nom: t } : t))
+          .map(t => champs(t, TECH)).filter(t => t.nom.trim()),
+        date: /^\d{4}-\d{2}-\d{2}$/.test(txt(f.date)) ? txt(f.date) : '',
+        type: txt(f.type), objet: txt(f.objet), consignes: txt(f.consignes),
+        langue: (typeof I18N !== 'undefined' && I18N.langue(langue)) ? langue : '',
+        client: champs(f.client, ['nom', 'reference', 'numeroClient', 'contact', 'fonction', 'tel', 'email', 'adresse', 'lieu']),
+        machines: liste(f.machines).filter(m => m && typeof m === 'object').map(m => champs(m, ['designation', 'modele', 'serie'])),
+        pieces: liste(f.pieces).filter(p => p && typeof p === 'object').map(p => Object.assign(
+          champs(p, ['denomination', 'reference', 'machineSerie', 'machineNom']), { quantite: Math.max(1, parseInt(p.quantite, 10) || 1) }))
+          .filter(p => p.denomination || p.reference)
+      };
+    }
+    async function decoder(texte, sansFlux) {
+      const codes = codesDans(texte);
+      if (!codes.length) throw new Error('code');
+      for (const code of codes) {
+        let f = null;
+        try { f = await decoderCode(code, sansFlux); } catch (_) { f = null; }
+        if (f && f.t === 'fiche-bfr' && f.id) { f._code = code; return nettoyer(f); }
+      }
+      throw new Error('format');
     }
     /* Fiche à envoyer, tirée de la fiche en préparation. */
     function depuis(r) {
@@ -4761,8 +4796,9 @@
       return {
         t: 'fiche-bfr', v: 1, id: r.id, cree: new Date().toISOString(),
         par: { nom: Report.nomComplet(S.technicien), fonction: S.technicien.fonction, tel: S.technicien.tel, email: S.technicien.email },
-        pour: { nom: e.nom, email: e.email },
-        techniciens: String(e.autres || '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean),
+        pour: { nom: e.nom, fonction: e.fonction, tel: e.tel, email: e.email },
+        techniciens: equipeFiche(r).filter(t => t && String(t.nom || '').trim())
+          .map(t => ({ nom: t.nom, fonction: t.fonction, tel: t.tel, email: t.email })),
         date: r.date, type: r.typeIntervention, objet: r.objet, consignes: e.consignes,
         client: { nom: c.nom, reference: c.reference, numeroClient: c.numeroClient, contact: c.contact, fonction: c.fonction,
           tel: c.tel, email: c.email, adresse: c.adresse, lieu: c.lieu },
@@ -4796,7 +4832,7 @@
       if (R && R.fiche && R.fiche.id === id) return R;
       return Store.get(K.rapports, []).find(r => r && r.fiche && r.fiche.id === id) || null;
     }
-    return { encoder: encoder, decoder: decoder, codeDans: codeDans, depuis: depuis, adresseApp: adresseApp,
+    return { encoder: encoder, decoder: decoder, codeDans: codeDans, codesDans: codesDans, depuis: depuis, adresseApp: adresseApp,
       recues: recues, garder: garder, oublier: oublier, dejaCreee: dejaCreee };
   })();
 
@@ -4808,30 +4844,50 @@
     if (!(R.envoi && R.envoi.email)) m.push('l\'e-mail du technicien');
     return m;
   }
+  /* Lien de la fiche préparé d'avance, mis à jour après chaque modification : sur iPhone,
+     copier ou partager doit se faire dans le toucher même, sans attendre la compression. */
+  const LienPret = { cle: '', lien: '', minuterie: null };
+  // la clé change avec la fiche, l'adresse de l'appli et la compression disponible
+  function cleFiche() { const f = Fiche.depuis(R); delete f.cree; return (typeof CompressionStream === 'function' ? 'z' : 'j') + Fiche.adresseApp() + JSON.stringify(f); }
   async function lienFiche() {
     const base = Fiche.adresseApp();
     if (!base) return '';
-    return base + '#fiche=' + (await Fiche.encoder(Fiche.depuis(R)));
+    const cle = cleFiche();
+    if (LienPret.cle === cle && LienPret.lien) return LienPret.lien;
+    const lien = base + '#fiche=' + (await Fiche.encoder(Fiche.depuis(R)));
+    LienPret.cle = cle; LienPret.lien = lien;
+    return lien;
   }
-  function messageFiche(f, lien) {
+  function lienFichePret() { return (LienPret.lien && LienPret.cle === cleFiche()) ? LienPret.lien : ''; }
+  function preparerLienFiche() {
+    if (!RSAV) return;
+    clearTimeout(LienPret.minuterie);
+    LienPret.minuterie = setTimeout(() => { lienFiche().catch(() => {}); }, 300);
+  }
+  /* court : sans le détail, quand le message complet serait trop long pour la messagerie. */
+  function messageFiche(f, lien, court) {
     const c = f.client || {};
     const prenom = String((f.pour && f.pour.nom) || '').trim().split(/\s+/)[0];
     const l = ['Bonjour' + (prenom ? ' ' + prenom : '') + ',', '',
-      'Voici la fiche de l\'intervention' + (f.date ? ' prévue le ' + Report.frDate(f.date) : '') + ' :'];
+      'Voici la fiche de l\'intervention' + (f.date ? ' prévue le ' + Report.frDate(f.date) : '') + (c.nom ? ' chez ' + c.nom : '') + '.',
+      'Touchez ce lien : l\'application crée l\'intervention avec toutes ces informations.', lien, ''];
+    if (court) {
+      l.push('Le détail (machine, pièces à emporter, consignes) est dans la fiche.');
+    } else {
     l.push('Client : ' + (c.nom || '—') + (c.lieu ? ' — ' + c.lieu : ''));
     if (c.adresse) l.push('Adresse : ' + c.adresse);
     if (c.contact) l.push('Contact : ' + c.contact + (c.fonction ? ' (' + c.fonction + ')' : '') + (c.tel ? ' — ' + c.tel : ''));
     (f.machines || []).forEach(m => l.push('Machine : ' + [m.designation, m.modele].filter(Boolean).join(' ') + (m.serie ? ' (N° ' + m.serie + ')' : '')));
     if (f.type && Report.TYPES_INTERVENTION[f.type]) l.push('Type : ' + Report.TYPES_INTERVENTION[f.type].libelle);
     if (f.objet) l.push('Objet : ' + f.objet);
-    if ((f.techniciens || []).length) l.push('Avec : ' + f.techniciens.join(', '));
+    if ((f.techniciens || []).length) l.push('Avec : ' + f.techniciens.map(texteTechnicien).join(' ; '));
     if ((f.pieces || []).length) {
       l.push('', 'Pièces à emporter :');
       f.pieces.forEach(p => l.push('- ' + (p.quantite || 1) + ' × ' + (p.denomination || '') + (p.reference ? ' (réf. ' + p.reference + ')' : '')));
     }
     if (f.consignes) l.push('', 'Consignes :', f.consignes);
-    l.push('', 'Touchez ce lien : l\'application crée l\'intervention avec toutes ces informations.', lien, '',
-      'iPhone, application installée sur l\'écran d\'accueil : copiez le lien, puis dans l\'application, Menu → Recevoir une fiche.');
+    }
+    l.push('', 'iPhone, application installée sur l\'écran d\'accueil : copiez le lien, puis dans l\'application, Menu → Recevoir une fiche.');
     const sig = [f.par && f.par.nom, f.par && f.par.fonction, f.par && f.par.tel].filter(Boolean);
     if (sig.length) l.push('', sig.join(' — '));
     return l.join('\n');
@@ -4842,17 +4898,34 @@
   }
   /* mode : 'mail' (messagerie), 'lien' (copier le lien), 'message' (copier le message),
      'partager' (feuille de partage du téléphone ou de Windows). */
+  /* Adresse « mailto: » de la fiche : destinataire, collègues en copie. Au-delà d'environ
+     1 900 caractères, certaines messageries (Outlook sous Windows) coupent le message, et
+     le lien avec : la version courte (lien en tête, sans le détail) est alors utilisée. */
+  function mailFiche(f, lien, objet) {
+    const copies = equipeFiche().map(t => String(t.email || '').trim()).filter(m => /@/.test(m));
+    const dests = { to: [String(R.envoi.email || '').trim()], cc: copies };
+    const url = urlMailto(dests, objet, messageFiche(f, lien));
+    if (url.length <= 1900) return { url: url, court: false };
+    return { url: urlMailto(dests, objet, messageFiche(f, lien, true)), court: true };
+  }
+
   async function envoyerFiche(mode) {
     synchroniserEntites();
     const manque = manquesFiche().filter(x => mode === 'mail' || x !== 'l\'e-mail du technicien');
     if (manque.length) { toast('À renseigner avant l\'envoi : ' + manque.join(', '), 3500); return; }
     if (!Report.nomComplet(S.technicien)) { toast('Indiquez d\'abord votre nom : il figure dans la fiche', 3200); feuilleIdentite(true); return; }
-    const lien = await lienFiche();
-    if (!lien) {
+    if (!Fiche.adresseApp()) {
       toast('Indiquez l\'adresse de l\'application dans Réglages → Rôle (lien des fiches)', 4500);
       feuilleReglages();
       return;
     }
+    /* Lien prêt (cas habituel) : copie et partage se font tout de suite, dans le toucher
+       (exigé par l'iPhone). Sinon on le fabrique ; la copie peut alors être refusée et
+       le lien reste affiché pour être copié à la main. */
+    const lien = lienFichePret() || await lienFiche();
+    // fiches complètes des techniciens retenues : proposées dans les prochaines fiches
+    retenirTechnicien(R.envoi);
+    equipeFiche().forEach(retenirTechnicien);
     const f = Fiche.depuis(R);
     const objet = 'Fiche d\'intervention — ' + (f.client.nom || '') + (f.date ? ' — ' + Report.frDate(f.date) : '');
     const message = messageFiche(f, lien);
@@ -4861,21 +4934,29 @@
     if (mode === 'lien' || mode === 'message') {
       const ok = await ecrirePressePapier(mode === 'lien' ? lien : message);
       toast(ok ? (mode === 'lien' ? 'Lien de la fiche copié' : 'Message copié : collez-le dans votre messagerie')
-               : 'Copie impossible : sélectionnez le lien affiché', 3200);
+               : 'Copie impossible : sélectionnez le lien affiché et copiez-le', 3500);
       return;
     }
     if (mode === 'partager' && navigator.share) {
-      try { await navigator.share({ title: objet, text: message }); } catch (_) { return; }
-    } else {
-      const copie = await ecrirePressePapier(message);   // si la messagerie coupe un long message, il reste à coller
-      if (dansUnCadre()) {
-        // aperçu (artefact) : la messagerie ne s'ouvre pas d'ici
-        toast(copie ? 'Message copié : collez-le dans un e-mail à ' + R.envoi.email.trim() : 'Copiez le lien affiché et envoyez-le par e-mail', 5000);
-      } else {
-        window.location.href = urlMailto({ to: [R.envoi.email.trim()], cc: [] }, objet, message);
+      try {
+        await navigator.share({ title: objet, text: message });
+      } catch (e) {
+        if (!e || e.name !== 'AbortError') toast('Partage impossible : utilisez « Copier le message »', 3500);
+        return;
       }
+    } else {
+      // le message complet est aussi copié : à coller si la messagerie le coupe
+      const copie = ecrirePressePapier(message);
+      if (dansUnCadre()) {
+        // aperçu (artefact) : la messagerie ne s'ouvre pas d'ici ; rien n'est envoyé
+        copie.then(ok => toast(ok ? 'Message copié : collez-le dans un e-mail à ' + R.envoi.email.trim()
+          : 'Copiez le lien affiché et envoyez-le par e-mail à ' + R.envoi.email.trim(), 5000));
+        return;
+      }
+      const mail = mailFiche(f, lien, objet);
+      if (mail.court) toast('Message court envoyé à la messagerie ; le message complet est copié si vous voulez le coller', 5000);
+      window.location.href = mail.url;
     }
-    retenirDestinataire(String(R.envoi.nom || '').trim(), String(R.envoi.email || '').trim());
     R.envoi.envoyeeLe = new Date().toISOString();
     R.statut = 'envoyée';
     sauver(true);
@@ -4883,13 +4964,106 @@
     toast('Fiche envoyée à ' + (R.envoi.nom || R.envoi.email), 3000);
   }
 
-  /* Destinataires déjà utilisés : nom et e-mail proposés d'un toucher. */
-  function destinatairesFiches() { return Store.get('sav3.destinatairesFiches', []).filter(x => x && x.nom); }
-  function retenirDestinataire(nom, email) {
-    if (!nom || !email) return;
-    const l = destinatairesFiches().filter(x => x.nom.toLowerCase() !== nom.toLowerCase());
-    l.unshift({ nom: nom, email: email });
-    Store.set('sav3.destinatairesFiches', l.slice(0, 12));
+
+  /* Techniciens de la fiche : le destinataire (R.envoi) et les autres techniciens sur
+     site (R.envoi.equipe), chacun avec nom, fonction, téléphone et e-mail. Une fiche
+     préparée avec l'ancien champ « autres techniciens » (noms séparés par des virgules)
+     est reprise en fiches. */
+  function equipeFiche(r) {
+    r = r || R;
+    const e = r.envoi || (r.envoi = {});
+    if (!Array.isArray(e.equipe) || (!e.equipe.length && String(e.autres || '').trim())) {
+      e.equipe = String(e.autres || '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean)
+        .map(nom => ({ id: uid('t'), nom: nom, fonction: '', tel: '', email: '' }));
+      delete e.autres;
+    }
+    return e.equipe;
+  }
+  function texteTechnicien(t) {
+    const details = [t.fonction, t.tel].filter(x => x && String(x).trim()).join(' — ');
+    return t.nom + (details ? ' (' + details + ')' : '');
+  }
+  /* Techniciens connus : ceux déjà saisis dans une fiche (avec fonction, téléphone et
+     e-mail), puis la liste des techniciens BFR de l'import clients (noms). */
+  function techniciensConnus() {
+    const vus = new Set(), out = [];
+    const ajouter = (t) => {
+      const k = String((t && t.nom) || '').trim().toLowerCase();
+      if (!k || vus.has(k)) return;
+      vus.add(k);
+      out.push({ nom: String(t.nom).trim(), fonction: t.fonction || '', tel: t.tel || '', email: t.email || '' });
+    };
+    Store.get('sav3.techniciensFiches', []).forEach(ajouter);
+    Store.get('sav3.destinatairesFiches', []).forEach(ajouter);     // version précédente : nom + e-mail
+    ((Clients.listeTechniciens ? Clients.listeTechniciens() : window.TECHNICIENS_BFR) || []).forEach(ajouter);
+    return out;
+  }
+  function retenirTechnicien(t) {
+    const nom = String((t && t.nom) || '').trim();
+    if (!nom) return;
+    const l = Store.get('sav3.techniciensFiches', []).filter(x => x && x.nom);
+    const avant = l.find(x => x.nom.toLowerCase() === nom.toLowerCase()) || {};
+    const fiche = { nom: nom };
+    ['fonction', 'tel', 'email'].forEach(k => { fiche[k] = String(t[k] || '').trim() || avant[k] || ''; });
+    Store.set('sav3.techniciensFiches', [fiche].concat(l.filter(x => x.nom.toLowerCase() !== nom.toLowerCase())).slice(0, 40));
+  }
+  /* Choix d'un technicien connu : sa fiche complète remplit le destinataire ou une ligne d'équipe. */
+  function remplirTechnicien(cible, t) {
+    const dest = cible === 'dest' ? R.envoi : equipeFiche()[+cible];
+    if (!dest || !t) return;
+    dest.nom = t.nom;
+    ['fonction', 'tel', 'email'].forEach(k => { dest[k] = t[k] || ''; });
+    /* Le champ en cours de saisie reçoit d'abord la nouvelle valeur : en redessinant
+       l'écran, le navigateur lui envoie un « change » avec ce qu'il contenait. */
+    const actif = document.activeElement;
+    if (actif && actif.dataset && actif.dataset.k) { actif.value = getPath(R, actif.dataset.k) || ''; actif.blur(); }
+    planifier(); rendreTout();
+  }
+  /* Propositions sous les champs « Nom » des techniciens (écran du responsable SAV). */
+  function brancherSuggestionsTechniciens() {
+    const sansAccent = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const boite = (champ) => {
+      let b = champ.nextElementSibling;
+      if (!b || !b.classList.contains('sugg-champ')) {
+        b = document.createElement('div');
+        b.className = 'suggestions sugg-champ';
+        b.hidden = true;
+        champ.insertAdjacentElement('afterend', b);
+      }
+      return b;
+    };
+    const fermer = (champ) => { const b = boite(champ); b.hidden = true; b.innerHTML = ''; };
+    const majSugg = (champ) => {
+      const q = sansAccent(champ.value.trim());
+      // les techniciens déjà dans la fiche (destinataire, autres lignes) ne sont pas reproposés
+      const cible = champ.dataset.techSugg;
+      const pris = new Set([cible === 'dest' ? '' : String(R.envoi.nom || '')].concat(
+        equipeFiche().filter((t, k) => String(k) !== cible).map(t => String(t.nom || ''))).map(n => n.trim().toLowerCase()).filter(Boolean));
+      const liste = techniciensConnus().filter(t => !pris.has(t.nom.toLowerCase()) &&
+        (!q || sansAccent(t.nom).indexOf(q) >= 0) && t.nom !== champ.value.trim()).slice(0, 8);
+      const b = boite(champ);
+      if (!liste.length) { fermer(champ); return; }
+      b.hidden = false;
+      b.innerHTML = liste.map(t => `<button type="button" class="suggestion" data-tech-nom="${esc(t.nom)}">
+        <span class="sug-nom">${esc(t.nom)}</span>
+        <span class="sug-detail">${esc([t.fonction, t.tel, t.email].filter(Boolean).join(' · ')) || 'Technicien BFR'}</span></button>`).join('');
+    };
+    const estChamp = (el) => !!(el && el.matches && el.matches('#zoneEvenements input[data-tech-sugg]'));
+    document.addEventListener('focusin', (e) => { if (estChamp(e.target)) majSugg(e.target); });
+    document.addEventListener('input', (e) => { if (estChamp(e.target)) majSugg(e.target); });
+    document.addEventListener('focusout', (e) => {
+      if (!estChamp(e.target)) return;
+      const c = e.target;
+      setTimeout(() => { if (document.activeElement !== c && c.isConnected) fermer(c); }, 250);
+    });
+    // le champ garde le focus pendant qu'on touche une proposition
+    document.addEventListener('mousedown', (e) => { if (e.target.closest('[data-tech-nom]')) e.preventDefault(); });
+    document.addEventListener('click', (e) => {
+      const sug = e.target.closest('[data-tech-nom]');
+      if (!sug) return;
+      const champ = sug.closest('.sugg-champ') && sug.closest('.sugg-champ').previousElementSibling;
+      if (champ) remplirTechnicien(champ.dataset.techSugg, techniciensConnus().find(x => x.nom === sug.dataset.techNom));
+    });
   }
 
   /* Ce qui manque à la fiche, mis à jour pendant la saisie (sans redessiner l'écran). */
@@ -4902,13 +5076,29 @@
   }
 
   function rendreFicheRSAV() {
+    preparerLienFiche();
     const zone = $('#zoneEvenements');
     const zc = $('#zoneCloture');
     if (zc) zc.innerHTML = '';
     if (!zone) return;
-    const e = R.envoi || (R.envoi = { nom: '', email: '', autres: '', consignes: '', envoyeeLe: '' });
+    const e = R.envoi || (R.envoi = { nom: '', fonction: '', tel: '', email: '', equipe: [], consignes: '', envoyeeLe: '' });
+    const equipe = equipeFiche();
     const pcs = R.pieces || [];
-    const connus = destinatairesFiches();
+    const connus = techniciensConnus().filter(t => t.email).slice(0, 8);
+    /* Fiche complète d'un technicien : nom (avec propositions), fonction, téléphone, e-mail. */
+    const champsTech = (base, t, cible) => `
+        <div class="grid2">
+          <div class="field"><label>Nom</label>
+            <input type="text" data-k="${base}.nom" data-tech-sugg="${cible}" value="${esc(t.nom || '')}" placeholder="Ex. Thomas BERNARD" autocomplete="off"></div>
+          <div class="field"><label>Fonction / spécialité</label>
+            <input type="text" data-k="${base}.fonction" value="${esc(t.fonction || '')}" placeholder="Ex. Automaticien, Mécanicien…" autocomplete="off"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Téléphone</label>
+            <input type="tel" data-k="${base}.tel" value="${esc(t.tel || '')}" placeholder="Ex. 06 12 34 56 78" autocomplete="off"></div>
+          <div class="field"><label>E-mail</label>
+            <input type="email" data-k="${base}.email" value="${esc(t.email || '')}" placeholder="prenom.nom@…" autocomplete="off"></div>
+        </div>`;
     const manque = manquesFiche();
     const adresse = Fiche.adresseApp();
     zone.innerHTML = `
@@ -4921,18 +5111,22 @@
       </div>
 
       <div class="card">
-        <h2>Technicien</h2>
-        ${connus.length ? `<div class="fm-puces petites" style="margin-bottom:10px">${connus.slice(0, 8).map((d, k) =>
-          `<button type="button" class="fm-puce${d.nom === e.nom ? ' on' : ''}" data-a="fiche-destinataire" data-k="${k}">${esc(d.nom)}</button>`).join('')}</div>` : ''}
-        <div class="grid2">
-          <div class="field"><label>Technicien destinataire</label>
-            <input type="text" data-k="envoi.nom" value="${esc(e.nom)}" placeholder="Ex. Romuald TORRES" autocomplete="off"></div>
-          <div class="field"><label>Son e-mail</label>
-            <input type="email" data-k="envoi.email" value="${esc(e.email)}" placeholder="prenom.nom@…" autocomplete="off"></div>
+        <h2>Techniciens</h2>
+        <div class="fiche-tech principal">
+          <div class="fiche-tech-titre">Technicien destinataire <small>reçoit la fiche par e-mail</small></div>
+          ${connus.length ? `<div class="fm-puces petites" style="margin-bottom:10px">${connus.map(d =>
+            `<button type="button" class="fm-puce${d.nom === e.nom ? ' on' : ''}" data-a="fiche-destinataire" data-nom="${esc(d.nom)}">${esc(d.nom)}</button>`).join('')}</div>` : ''}
+          ${champsTech('envoi', e, 'dest')}
         </div>
-        <div class="field"><label>Autres techniciens prévus (facultatif)</label>
-          <input type="text" data-k="envoi.autres" value="${esc(e.autres)}" placeholder="Ex. Thomas BERNARD, Julie MARTIN" autocomplete="off"></div>
-        <div class="field"><label>Consignes pour le technicien</label>
+        ${equipe.map((t, i) => `<div class="fiche-tech">
+          <div class="fiche-tech-titre">Technicien ${i + 2} sur site
+            <button type="button" class="btn sm danger" data-a="fiche-retirer-tech" data-i="${i}">${(ICO.trash && ICO.trash(12)) || ''} Retirer</button></div>
+          ${champsTech('envoi.equipe.' + i, t, i)}
+        </div>`).join('')}
+        <button type="button" class="btn sm grey" data-a="fiche-ajouter-tech">${(ICO.plus && ICO.plus(14)) || '+'} Ajouter un technicien sur site</button>
+        <p class="small" style="margin-top:6px">Les techniciens qui ont un e-mail reçoivent la fiche en copie : chacun peut l'ouvrir dans son application.
+          Les fiches saisies sont proposées dès les premières lettres du nom.</p>
+        <div class="field" style="margin-top:12px"><label>Consignes pour le technicien</label>
           <textarea data-k="envoi.consignes" rows="4" placeholder="Ex. Accès par le quai 3, badge à l'accueil. EPI : chaussures de sécurité, charlotte. Appeler M. Rivière en arrivant.">${esc(e.consignes)}</textarea></div>
       </div>
 
@@ -5081,7 +5275,8 @@
         ${ligne('Contact', [c.contact, c.fonction ? '(' + c.fonction + ')' : '', c.tel].filter(Boolean).join(' '))}
         ${(f.machines || []).map(m => ligne('Machine', [m.designation, m.modele].filter(Boolean).join(' ') + (m.serie ? ' — N° ' + m.serie : ''))).join('')}
         ${ligne('Date prévue', f.date ? Report.frDate(f.date) : '')}${ligne('Type', type ? type.libelle : '')}${ligne('Objet', f.objet)}
-        ${ligne('Avec', (f.techniciens || []).join(', '))}
+        ${ligne('Technicien', f.pour && f.pour.nom ? texteTechnicien(f.pour) : '')}
+        ${(f.techniciens || []).map(t => ligne('Avec', texteTechnicien(t))).join('')}
         ${ligne('Langue du rapport', f.langue && typeof I18N !== 'undefined' ? 'français + ' + I18N.natif(f.langue) : '')}
       </div></div>
       ${(f.pieces || []).length ? `<div class="card"><h2>Pièces à emporter</h2>
@@ -5096,8 +5291,10 @@
       </div></div>`, (panneau) => {
       panneau.addEventListener('click', async (ev) => {
         if (ev.target.closest('[data-a="fiche-copier"]')) {
-          const code = await Fiche.encoder(f);
-          const ok = await ecrirePressePapier((Fiche.adresseApp() || '') + '#fiche=' + code);
+          // code d'origine de la fiche : copie immédiate, dans le toucher (exigé par l'iPhone)
+          const code = f._code || await Fiche.encoder(f);
+          const base = Fiche.adresseApp() || (location.origin + location.pathname);
+          const ok = await ecrirePressePapier(base + '#fiche=' + code);
           toast(ok ? 'Fiche copiée : collez-la dans l\'application (Menu → Recevoir une fiche)' : 'Copie impossible', 4000);
           return;
         }
@@ -5134,9 +5331,17 @@
     const ms = (f.machines || []).filter(m => m && (m.designation || m.modele || m.serie));
     if (ms.length) r.machines = ms.map(m => ({ id: uid('m'), designation: m.designation || '', modele: m.modele || '', serie: m.serie || '' }));
     r.machine.designation = r.machines[0].designation; r.machine.modele = r.machines[0].modele; r.machine.serie = r.machines[0].serie;
-    const moi = String(Report.nomComplet(S.technicien) || '').toLowerCase();
-    (f.techniciens || []).filter(n => n && n.toLowerCase() !== moi)
-      .forEach(n => r.techniciens.push({ id: uid('t'), nom: n, fonction: 'Technicien SAV', principal: false }));
+    /* Collègues sur site : le destinataire et les techniciens de la fiche, sauf moi
+       (un collègue en copie de l'e-mail ouvre la même fiche : le destinataire devient
+       alors son collègue). Identité pas encore saisie : le destinataire, c'est moi. */
+    const moi = String(Report.nomComplet(S.technicien) || '').trim().toLowerCase();
+    const vus = new Set([moi]);
+    [f.pour || {}].concat(f.techniciens || []).forEach((t, k) => {
+      const n = String((t && t.nom) || '').trim();
+      if (!n || vus.has(n.toLowerCase()) || (!moi && k === 0)) return;
+      vus.add(n.toLowerCase());
+      r.techniciens.push({ id: uid('t'), nom: n, fonction: t.fonction || 'Technicien SAV', tel: t.tel || '', email: t.email || '', principal: false });
+    });
     r.pieces = (f.pieces || []).map(p => {
       const m = r.machines.find(x => p.machineSerie && x.serie === p.machineSerie) ||
         r.machines.find(x => p.machineNom && (x.designation === p.machineNom || x.modele === p.machineNom));
@@ -5482,17 +5687,28 @@
   function feuilleAide() {
     Ouvrir.ouvrir(null, `<div class="panel">
       <div class="grab"></div><h3>Mode d'emploi</h3>
-      <p class="sub">Une fois pour toutes : Menu → <strong>Mes informations</strong> (nom, téléphone, e-mail) — ces coordonnées restent dans le téléphone et partent dans tous vos rapports.</p>
+      ${RSAV ? `<p class="sub">Appareil en mode <strong>Responsable SAV</strong> : vous préparez les fiches d'intervention et les envoyez aux techniciens.</p>
+      <ol class="liste" style="font-size:14px">
+        <li><strong>Client &amp; machine</strong> — client (annuaire), contact, lieu, machine, <em>date prévue</em>, type et objet de l'intervention.</li>
+        <li><strong>Pièces à emporter</strong> — le technicien indiquera sur place celles qui restent chez le client.</li>
+        <li><strong>Techniciens</strong> — le destinataire et les autres techniciens sur site (fiches complètes, proposées dès les premières lettres du nom), puis les <em>consignes</em> (accès, EPI, contact à l'arrivée).</li>
+        <li><strong>Envoyer par e-mail</strong> — la messagerie s'ouvre avec le message et le lien ; les autres techniciens sont en copie. En touchant le lien, le technicien obtient l'intervention toute prête.</li>
+      </ol>
+      <p class="small">La fiche voyage dans le lien lui-même (après « # ») : elle n'est déposée sur aucun serveur. Menu → <strong>Fiches préparées</strong> pour rouvrir, modifier et renvoyer une fiche.
+        Dans un aperçu, indiquez l'adresse de l'application dans Réglages → Rôle.</p>`
+      : `<p class="sub">Une fois pour toutes : Menu → <strong>Mes informations</strong> (nom, téléphone, e-mail) — ces coordonnées restent dans le téléphone et partent dans tous vos rapports.</p>
       <p class="sub">Puis quatre gestes, dans l'ordre de l'intervention.</p>
       <ol class="liste" style="font-size:14px">
-        <li><strong>Démarrer</strong> — appuyez sur « Démarrer l'intervention » en haut : l'heure de début est enregistrée. Pause possible (repas, attente pièce).</li>
-        <li><strong>Ajouter un évènement</strong> à chaque constat : <em>domaine</em> (mécanique / électrique / automatisme) → <em>annotation</em> écrite ou dictée → <em>photo</em> annotée au doigt → <em>catégorie</em> (sécurité, urgent, priorité haute/basse, informatif).</li>
+        <li><strong>Démarrer</strong> — appuyez sur « Démarrer l'intervention » en haut : l'heure de début est enregistrée. Pause possible (repas, attente pièce) ; une pause le soir reprise le lendemain ouvre une nouvelle journée.</li>
+        <li><strong>Ajouter un évènement</strong> — <em>Travail réalisé</em> (ce que vous avez fait, avec son résultat), <em>Constat</em> (ce que vous avez observé, avec sa priorité) ou <em>Formation</em> (opérateurs formés : programme, évaluation, signature de chacun). Texte écrit ou dicté, photo annotée au doigt.</li>
         <li><strong>Point client</strong> — en fin d'intervention, expliquez le déroulé puis faites signer le client sur l'écran.</li>
         <li><strong>Soumettre le rapport</strong> — le PDF (et la version Word) partent par e-mail au client et au responsable SAV. Vos nom et coordonnées figurent dans le bloc de signature.</li>
       </ol>
+      <p class="small"><strong>Fiche préparée par le SAV :</strong> touchez le lien de l'e-mail, puis « Créer l'intervention » : tout est déjà rempli. Pour chaque pièce préparée, indiquez « Laissée sur site » ou « Rapportée ».
+        iPhone avec l'application sur l'écran d'accueil : « Copier la fiche », puis Menu → Recevoir une fiche.</p>`}
       <div class="sep"></div>
       <p class="small"><strong>Client étranger :</strong> dans <em>Client &amp; machine</em>, cochez « Traduire le rapport dans la langue du client » et choisissez la langue (anglais, allemand, néerlandais, espagnol, italien, portugais). Le mail part alors avec <strong>deux rapports</strong> : le français et la version traduite. La langue est retenue pour ce client. Un appui sur « Préparer la langue sur ce téléphone » (au bureau, en Wi-Fi) rend la traduction disponible même hors connexion.</p>
-      <p class="small">Un évènement reste modifiable à tout moment : appuyez dessus pour reprendre l'assistant.</p>
+      ${RSAV ? '' : '<p class="small">Un évènement reste modifiable à tout moment : appuyez dessus pour reprendre l\'assistant.</p>'}
       <p class="small"><strong>Installation :</strong> dans Chrome, menu ⋮ → « Ajouter à l'écran d'accueil ». L'application fonctionne ensuite hors connexion.</p>
       <p class="small"><strong>Version de l'application :</strong> <span id="versionAppli">${self.SAV_VERSION || 'non versionnée'} (${self.SAV_DATE || '25/09/2026'})</span> — si l'application ne se met pas à jour, ce numéro (au support) dit quelle version tourne sur ce téléphone.</p>
       <button class="btn grey wide" data-a="fermer">Fermer</button></div>`);
@@ -5510,6 +5726,8 @@
     });
     document.addEventListener('change', (e) => {
       const t = e.target;
+      // champ retiré de l'écran (redessiné) : son « change » tardif écraserait la nouvelle valeur
+      if (!t.isConnected) return;
       if (t.closest && t.closest('.sheet, .assistant')) return;
       if (t.dataset && t.dataset.k) {
         setPath(R, t.dataset.k, t.value); planifier();
@@ -5573,9 +5791,16 @@
       else if (a === 'fiche-copier-message') envoyerFiche('message');
       else if (a === 'fiche-partager') envoyerFiche('partager');
       else if (a === 'fiche-nouvelle') nouvelleFiche();
-      else if (a === 'fiche-destinataire') {
-        const d = destinatairesFiches()[+b.dataset.k];
-        if (d) { R.envoi.nom = d.nom; R.envoi.email = d.email; planifier(); rendreTout(); }
+      else if (a === 'fiche-destinataire') remplirTechnicien('dest', techniciensConnus().find(x => x.nom === b.dataset.nom));
+      else if (a === 'fiche-ajouter-tech') {
+        equipeFiche().push({ id: uid('t'), nom: '', fonction: '', tel: '', email: '' });
+        planifier(); rendreTout();
+        const champs = $$('#zoneEvenements input[data-tech-sugg]');
+        if (champs.length) champs[champs.length - 1].focus();
+      }
+      else if (a === 'fiche-retirer-tech') {
+        equipeFiche().splice(+b.dataset.i, 1);
+        planifier(); rendreTout();
       }
       // fiche reçue : technicien
       else if (a === 'fiche-voir') {
@@ -6288,6 +6513,7 @@
       if (libC) libC.textContent = 'Pièce à emporter';
     }
     brancher();
+    if (RSAV) brancherSuggestionsTechniciens();
     rendreTout();
     // fiche d'intervention ouverte par un lien (au lancement, ou appli déjà ouverte)
     recevoirFicheDepuisAdresse();
@@ -6345,6 +6571,7 @@
   window.APP = {
     get rapport() { return R; }, get reglages() { return S; },
     Fiche: Fiche, lienFiche: lienFiche,
+    mailFiche: async () => mailFiche(Fiche.depuis(R), await lienFiche(), 'Fiche'),
     sauver: sauver, planifier: planifier,
     pdf: pdf, docx: docx, rendreTout: rendreTout, toast: toast,
     destinatairesMail: destinatairesMail, destinatairesSAV: destinatairesSAV, destinatairesClient: destinatairesClient, destinataires: destinataires,

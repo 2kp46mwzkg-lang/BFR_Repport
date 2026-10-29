@@ -2682,3 +2682,89 @@ body.mode-rsav .actionbar #btnAjouterPiece { flex: 1 1 100%; }
   cursor: pointer;
 }
 .piece-radio input { width: 20px; height: 20px; }
+
+/* Fiches technicien de la fiche d'intervention (responsable SAV) */
+.fiche-tech {
+  padding: 10px 12px 2px;
+  margin-bottom: 10px;
+  border: 1px solid var(--bfr-border);
+  border-radius: var(--radius-sm);
+  background: var(--bfr-bg, #f8fafc);
+}
+.fiche-tech.principal { border-color: var(--bfr-primary-border, #9be3fa); background: var(--bfr-primary-light); }
+.fiche-tech-titre {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-family: var(--font-heading);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--bfr-secondary);
+}
+.fiche-tech-titre small { font-weight: 500; font-size: 12px; color: var(--bfr-text-muted); margin-right: auto; }
+.fiche-tech-titre .btn { min-height: 28px; padding: 2px 8px; font-size: 12px; }
+
+/* =========================================================================
+   PETITS ÉCRANS (320–360 px) : rien ne dépasse de l'écran
+   ========================================================================= */
+.ev-groupe-titre { flex-wrap: wrap; row-gap: 6px; }
+.btn-ev-pill.ajout-formation { white-space: normal; text-align: left; max-width: 100%; }
+.ev-actions-pied { flex-wrap: wrap; justify-content: flex-end; }
+.ev-pied { row-gap: 6px; }
+/* barre de l'assistant : « Supprimer » réduit à son icône sur les petits écrans */
+.assistant-nav .btn.danger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+@media (max-width: 420px) {
+  .assistant-nav { gap: 8px; padding-left: 10px; padding-right: 10px; }
+  .assistant-nav .btn { padding-left: 8px; padding-right: 8px; }
+  .assistant-nav .btn.danger { min-width: 48px; }
+  .assistant-nav .nav-texte { display: none; }
+}
+
+/* choix « laissée sur site / rapportée » : pas le style des étiquettes de champ */
+.field label.piece-radio {
+  display: inline-flex;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-body, inherit);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--bfr-text);
+  margin-bottom: 0;
+}
+
+/* horaires de la formation : date sur toute la largeur sur les petits écrans */
+@media (max-width: 400px) {
+  .fm-horaires { grid-template-columns: 1fr 1fr; }
+  .fm-horaires .field:first-child { grid-column: 1 / -1; }
+}
+
+/* bilan de la formation : libellé et valeur se partagent la ligne */
+.fm-bilan-ligne { align-items: flex-start; }
+.fm-bilan-ligne > span { white-space: normal; flex: 0 1 45%; }
+.fm-bilan-ligne strong { flex: 1 1 55%; }
+
+/* Pièces de rechange / à emporter : une carte par pièce */
+.pieces-liste { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.piece-carte {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--bfr-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+.piece-carte.piece-rapportee { background: #f8fafc; }
+.piece-carte.piece-rapportee .piece-nom strong { text-decoration: line-through; color: #64748b; }
+.piece-photo { flex: 0 0 auto; padding: 0; border: 0; background: none; cursor: pointer; }
+.piece-photo img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--bfr-border); display: block; }
+.piece-info { flex: 1 1 auto; min-width: 0; }
+.piece-nom { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 14.5px; }
+.piece-qte { font-weight: 700; color: var(--bfr-secondary); white-space: nowrap; }
+.piece-detail { margin-top: 2px; font-size: 12.5px; color: var(--bfr-text-muted); overflow-wrap: anywhere; }
+.piece-ref { font-family: ui-monospace, monospace; color: #475569; }
+.piece-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+.piece-actions .btn { min-height: 34px; min-width: 38px; padding: 4px 8px; }

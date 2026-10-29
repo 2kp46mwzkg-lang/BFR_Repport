@@ -160,7 +160,8 @@ JSON (à faire régulièrement) et adapter les réglages.
 
 Dans **Réglages → Rôle sur cet appareil**, choisir *Responsable SAV* : l'écran devient
 « Fiche d'intervention à préparer » (client, machine, date prévue, type, objet, **pièces à
-emporter**, technicien destinataire, **consignes**). **Envoyer par e-mail** ouvre la
+emporter**, **fiches techniciens** — destinataire et techniciens sur site avec fonction,
+téléphone, e-mail, proposées dès les premières lettres —, **consignes**). **Envoyer par e-mail** ouvre la
 messagerie avec un message tout prêt et un lien. Le technicien touche le lien : son
 application crée l'intervention pré-remplie. Il indique ensuite pour chaque pièce préparée
 **Laissée sur site** ou **Rapportée** ; seules les pièces laissées sont dans le rapport.

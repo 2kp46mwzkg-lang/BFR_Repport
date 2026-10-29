@@ -1115,8 +1115,16 @@ async def test_fiche_responsable_sav(nav, adresse):
         await pa.wait_for_timeout(300)
     verifier(await pa.is_visible('#ficheManque'), 'l\'e-mail du technicien manque : l\'écran doit le dire')
     await pa.fill('[data-k="envoi.nom"]', 'Romuald TORRES')
+    await pa.fill('[data-k="envoi.fonction"]', 'Technicien SAV')
+    await pa.fill('[data-k="envoi.tel"]', '06 11 22 33 44')
     await pa.fill('[data-k="envoi.email"]', 'romuald@exemple.fr')
-    await pa.fill('[data-k="envoi.autres"]', 'Thomas BERNARD')
+    # fiche complète d'un deuxième technicien sur site
+    await pa.click('[data-a="fiche-ajouter-tech"]')
+    await pa.wait_for_timeout(300)
+    await pa.fill('[data-k="envoi.equipe.0.nom"]', 'Thomas BERNARD')
+    await pa.fill('[data-k="envoi.equipe.0.fonction"]', 'Automaticien')
+    await pa.fill('[data-k="envoi.equipe.0.tel"]', '06 99 88 77 66')
+    await pa.fill('[data-k="envoi.equipe.0.email"]', 'thomas@exemple.fr')
     await pa.fill('[data-k="envoi.consignes"]', 'Badge à l\'accueil.\nAppeler M. Rivière en arrivant.')
     verifier(not await pa.is_visible('#ficheManque'), 'tout est renseigné : plus rien ne doit manquer')
     await pa.wait_for_timeout(900)
@@ -1129,7 +1137,8 @@ async def test_fiche_responsable_sav(nav, adresse):
     await pa.wait_for_timeout(800)
     message = await pa.evaluate('navigator.clipboard.readText()')
     for attendu in ['Bonjour Romuald,', 'Client : FROMAGERIE DU JURA', '4 × Roulement SKF 6205 (réf. SKF-6205-2RS)',
-                    'prévue le 15/03/2099', 'Appeler M. Rivière', lien.split('#')[0] + '#fiche=z', 'Marc DUPUIS — Responsable SAV']:
+                    'prévue le 15/03/2099', 'Appeler M. Rivière', lien.split('#')[0] + '#fiche=z', 'Marc DUPUIS — Responsable SAV',
+                    'Avec : Thomas BERNARD (Automaticien — 06 99 88 77 66)']:
         verifier(attendu in message, '« %s » absent du message de la fiche' % attendu[:60])
     # fiches rangées à part : le rapport du technicien n'est pas touché
     verifier((await a.rapport_stocke()).get('id') == rapport_tech.get('id'), 'le rapport du technicien a été modifié')
@@ -1162,7 +1171,8 @@ async def test_fiche_responsable_sav(nav, adresse):
     verifier(r['client']['nom'] == 'FROMAGERIE DU JURA' and r['client']['contact'] == 'M. Rivière', 'client : %s' % r['client'])
     verifier(r['machines'][0]['serie'] == 'SN-0387' and r['objet'] == 'Bruit anormal sur la découpe', 'machine / objet non repris')
     verifier(r['date'] == '2099-03-15' and r['typeIntervention'] == 'sav', 'date prévue / type : %s %s' % (r['date'], r.get('typeIntervention')))
-    verifier([t['nom'] for t in r['techniciens']] == ['Romuald TORRES', 'Thomas BERNARD'], 'techniciens : %s' % r['techniciens'])
+    verifier([(t['nom'], t['fonction']) for t in r['techniciens']] == [('Romuald TORRES', 'Technicien SAV'), ('Thomas BERNARD', 'Automaticien')],
+             'techniciens : %s' % r['techniciens'])
     verifier([(p['denomination'], p['quantite'], p['prevue'], p['statut']) for p in r['pieces']] ==
              [('Roulement SKF 6205', 4, True, ''), ('Courroie SPZ 1250', 1, True, '')], 'pièces : %s' % r['pieces'])
     verifier('Appeler M. Rivière' in r['fiche']['consignes'], 'consignes non reprises')
@@ -1192,6 +1202,22 @@ async def test_fiche_responsable_sav(nav, adresse):
     await pb.wait_for_selector('.sheet.open [data-a="fiche-creer"]', timeout=5000)
     await b.fermer()
 
+    # nouvelle fiche : les fiches techniciens déjà saisies sont proposées
+    await pa.click('[data-a="fiche-nouvelle"]')
+    await pa.wait_for_timeout(600)
+    await pa.click('[data-a="fiche-ajouter-tech"]')
+    await pa.wait_for_timeout(300)
+    await pa.type('[data-k="envoi.equipe.0.nom"]', 'thom')
+    await pa.wait_for_selector('#zoneEvenements [data-tech-nom="Thomas BERNARD"]', timeout=3000)
+    await pa.click('#zoneEvenements [data-tech-nom="Thomas BERNARD"]')
+    await pa.wait_for_timeout(1000)
+    eq = (await pa.evaluate('JSON.parse(localStorage["sav3.fiche"])'))['envoi']['equipe'][0]
+    verifier((eq['nom'], eq['fonction'], eq['tel'], eq['email']) == ('Thomas BERNARD', 'Automaticien', '06 99 88 77 66', 'thomas@exemple.fr'),
+             'fiche technicien proposée incomplète : %s' % eq)
+    await pa.click('[data-a="fiche-destinataire"][data-nom="Romuald TORRES"]')
+    await pa.wait_for_timeout(600)
+    verifier(await pa.input_value('[data-k="envoi.tel"]') == '06 11 22 33 44', 'le destinataire choisi doit remplir sa fiche')
+
     # retour en « Technicien » sur le premier appareil : son rapport revient
     await a.menu('reglages')
     await pa.click('#cardRole input[value="technicien"]')
@@ -1207,9 +1233,138 @@ async def test_fiche_responsable_sav(nav, adresse):
     return a
 
 
+async def test_balayage_formation_fiches(nav, adresse):
+    """Revue du 29/10 : cas limites des formations et des fiches, écrans de 320 px."""
+    t = await Telephone(nav, adresse).ouvrir()
+    pg = t.pg
+    await t.identite()
+    # --- formation : comptes, sujets, horaires, domaine ---
+    res = await pg.evaluate('''() => {
+      const S = APP.reglages;
+      const p = (nom) => ({ id: nom, nom: nom, evaluation: 'acquis', signeA: 'x' });
+      const f = (id, part, extra) => Object.assign({ id: id, nature: 'formation', heure: '2026-10-29T08:00:00Z', domaine: 'MECANIQUE',
+        formation: Object.assign({ sujets: ['Conduite de la machine'], debut: '09:00', fin: '11:00', points: [{ id: 'a', libelle: 'x' }],
+          methodes: ['pratique'], participants: part }, extra || {}) });
+      const e = Report.etat({ evenements: [f('f1', [p('Julie MARTIN'), p('Paul LEROY')]), f('f2', [p('julie martin')])], chrono: {} }, S);
+      const inconnu = Report.formationDe({ formation: { sujets: ['Sujet retiré de la liste', 'Changement de format'] } });
+      const inverse = Report.bilanFormation(f('f3', [p('A')], { debut: '10:00', fin: '09:00' }));
+      const nul = Report.bilanFormation(f('f4', [p('A')], { debut: '10:00', fin: '10:00' }));
+      return { distincts: e.formes.distincts, n: e.formes.n, meca: e.parDomaine.MECANIQUE || 0,
+        sujets: inconnu.sujets, inverse: inverse.complet, nul: nul.complet, manques: nul.manques };
+    }''')
+    verifier(res['distincts'] == 2 and res['n'] == 3, 'opérateurs distincts : %s' % res)
+    verifier(res['meca'] == 0, 'une formation ne doit pas compter dans la répartition par domaine : %s' % res)
+    verifier(res['sujets'] == ['Changement de format', 'Sujet retiré de la liste'], 'sujet hors liste perdu : %s' % res['sujets'])
+    verifier(not res['inverse'] and not res['nul'] and 'horaires' in ' '.join(res['manques']), 'horaires incohérents acceptés : %s' % res)
+    # sujet unique trop long pour le bandeau : imprimé en entier dans la fiche de session
+    b64 = await pg.evaluate('''async () => {
+      const r = JSON.parse(JSON.stringify(APP.rapport));
+      r.typeIntervention = 'sav';
+      r.evenements = [{ id: 'f9', nature: 'formation', heure: new Date().toISOString(), formation: {
+        sujets: [], intitule: 'Remise en route complète de la ligne de découpe après arrêt prolongé et redémarrage progressif',
+        debut: '09:00', fin: '10:00', participants: [] } }];
+      const res = await Report.genererPDF(r, APP.reglages, {});
+      const buf = new Uint8Array(await res.blob.arrayBuffer());
+      let bin = ''; for (let k = 0; k < buf.length; k++) bin += String.fromCharCode(buf[k]);
+      return btoa(bin); }''')
+    plat = re.sub(r'\s+', ' ', '\n'.join(x.extract_text() or '' for x in PdfReader(io.BytesIO(base64.b64decode(b64))).pages))
+    verifier('après arrêt prolongé et redémarrage progressif' in plat, 'sujet long coupé dans le PDF')
+
+    # --- liens de fiche : encodés, coupés, sans deflate-raw, champs douteux ---
+    res = await pg.evaluate('''async () => {
+      const F = APP.Fiche;
+      const base = 'https://exemple.fr/app/#fiche=';
+      const code = await F.encoder({ t: 'fiche-bfr', v: 1, id: 'r1', cree: 5, langue: 'xx', client: { nom: 'ACME', tel: 33 },
+        machines: [null, { designation: 'Presse' }], pieces: [null, { denomination: 'Joint', quantite: 'abc' }], techniciens: ['Luc', { nom: '' }] });
+      const lien = base + code;
+      const out = {};
+      const f = await F.decoder(lien);
+      out.propre = [f.cree, f.langue, f.client.tel, f.machines.length, f.pieces.length, f.pieces[0].quantite, f.techniciens.length];
+      out.encode = (await F.decoder('https://safelinks.exemple/?url=' + encodeURIComponent(lien))).client.nom;
+      out.coupe = (await F.decoder('Bonjour,\\n' + base + code.slice(0, 30) + '\\n' + code.slice(30) + '\\nMarc')).client.nom;
+      const D = window.DecompressionStream;
+      window.DecompressionStream = function () { throw new TypeError('deflate-raw non pris en charge'); };
+      try { out.ancien = (await F.decoder(lien)).client.nom; } finally { window.DecompressionStream = D; }
+      return out; }''')
+    verifier(res['propre'] == ['5', '', '33', 1, 1, 1, 1], 'champs du lien mal vérifiés : %s' % res['propre'])
+    verifier(res['encode'] == 'ACME' and res['coupe'] == 'ACME' and res['ancien'] == 'ACME', 'lien encodé/coupé/ancien navigateur : %s' % res)
+
+    # --- écrans de 320 px : rien ne dépasse ---
+    await pg.set_viewport_size({'width': 320, 'height': 640})
+    await t.evenement('Remplacement du roulement.', nature='travail', resultat='resolu')
+    await pg.click('[data-a="ajouter-formation"] >> nth=0')
+    await pg.wait_for_timeout(300)
+    await pg.click('[data-intitule="Conduite de la machine"]')
+    await pg.click('.assistant-nav [data-a="suivant"]')
+    await pg.wait_for_timeout(300)
+    largeurs = await pg.evaluate('''() => { const nav = document.querySelector('.assistant-nav').getBoundingClientRect();
+      const dates = [...document.querySelectorAll('.fm-horaires input')].map(i => i.getBoundingClientRect().width);
+      return { nav: nav.right, boutons: [...document.querySelectorAll('.assistant-nav .btn')].map(b => Math.round(b.getBoundingClientRect().right)), dates: dates }; }''')
+    verifier(max(largeurs['boutons']) <= 320, 'barre de l\'assistant hors de l\'écran : %s' % largeurs)
+    verifier(min(largeurs['dates']) >= 110, 'champs de date et d\'heure trop étroits : %s' % largeurs['dates'])
+    await pg.click('.assistant-bar [data-a="enregistrer"]')
+    await pg.wait_for_timeout(600)
+    await t.fermer_feuilles()
+    await pg.click('#btnAjouterPiece')
+    await pg.wait_for_timeout(300)
+    await pg.fill('#pcDenom', 'Courroie crantée HTD 8M très longue dénomination')
+    await pg.fill('#pcRef', 'HTD-8M-1200-ZZ')
+    await pg.click('[data-a="sauvegarder-piece"]')
+    await pg.wait_for_timeout(500)
+    debord = await pg.evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth')
+    verifier(debord <= 0, 'l\'écran principal déborde de %d px à 320 px' % debord)
+    bouton = await pg.evaluate('''() => { const b = document.querySelector('#cardPieces [data-a="supprimer-piece"]').getBoundingClientRect();
+      return b.right <= document.documentElement.clientWidth; }''')
+    verifier(bouton, 'le bouton de suppression de la pièce doit être visible sans défilement')
+    verifier(not await pg.query_selector('[data-a="horodater"]'), 'bouton « Horodater » sans effet encore présent')
+    await pg.set_viewport_size({'width': 390, 'height': 844})
+
+    # --- responsable SAV : ancien format, propositions, fiche incomplète conservée, message court ---
+    await pg.evaluate('''() => { const s = JSON.parse(localStorage["sav3.settings"]); s.role = "rsav"; localStorage["sav3.settings"] = JSON.stringify(s);
+      localStorage["sav3.fiche"] = JSON.stringify({ id: 'rold', client: { nom: 'ACME' }, envoi: { nom: 'Romuald TORRES', email: 'r@x.fr', autres: 'Thomas BERNARD, Julie MARTIN', consignes: '' } });
+      localStorage["sav3.techniciensFiches"] = JSON.stringify([{ nom: 'Luc PETIT', fonction: 'Mécanicien', tel: '', email: '' },
+        { nom: 'Romuald TORRES', fonction: 'Automaticien', tel: '06', email: 'r@x.fr' }]); }''')
+    await pg.reload(wait_until='networkidle')
+    await pg.wait_for_timeout(1200)
+    await t.fermer_feuilles()
+    noms = await pg.evaluate('[...document.querySelectorAll("[data-k$=\\".nom\\"][data-k^=\\"envoi.equipe\\"]")].map(i => i.value)')
+    verifier(noms == ['Thomas BERNARD', 'Julie MARTIN'], 'collègues d\'une fiche de l\'ancien format perdus : %s' % noms)
+    # propositions : le destinataire n'est pas reproposé ; un choix remplace toute la fiche
+    await pg.click('[data-k="envoi.equipe.0.nom"]')
+    await pg.fill('[data-k="envoi.equipe.0.nom"]', '')
+    await pg.type('[data-k="envoi.equipe.0.nom"]', 'r')
+    await pg.wait_for_timeout(300)
+    verifier(not await pg.query_selector('#zoneEvenements [data-tech-nom="Romuald TORRES"]'), 'le destinataire ne doit pas être reproposé')
+    await pg.fill('[data-k="envoi.email"]', 'ancien@x.fr')
+    await pg.fill('[data-k="envoi.nom"]', '')
+    await pg.type('[data-k="envoi.nom"]', 'Luc')
+    await pg.wait_for_selector('#zoneEvenements [data-tech-nom="Luc PETIT"]', timeout=3000)
+    await pg.click('#zoneEvenements [data-tech-nom="Luc PETIT"]')
+    await pg.wait_for_timeout(500)
+    verifier(await pg.input_value('[data-k="envoi.email"]') == '', 'l\'e-mail du technicien précédent doit être effacé')
+    # message trop long pour la messagerie : version courte, lien compris
+    await pg.fill('[data-k="envoi.email"]', 'luc@x.fr')
+    await pg.fill('[data-k="envoi.consignes"]', 'Consigne très détaillée. ' * 70)
+    await pg.wait_for_timeout(900)
+    mail = await pg.evaluate('APP.mailFiche()')
+    verifier(mail['court'] and len(mail['url']) <= 2600 and '%23fiche%3D' in mail['url'], 'message de fiche trop long : %d car.' % len(mail['url']))
+    # fiche avec seulement le technicien : conservée dans « Fiches préparées »
+    await pg.click('[data-a="fiche-nouvelle"]')
+    await pg.wait_for_timeout(600)
+    await pg.fill('[data-k="envoi.nom"]', 'Julie MARTIN')
+    await pg.wait_for_timeout(1000)
+    await pg.click('[data-a="fiche-nouvelle"]')
+    await pg.wait_for_timeout(800)
+    fiches = await pg.evaluate('JSON.parse(localStorage["sav3.fiches"]).map(f => f.envoi && f.envoi.nom)')
+    verifier('Julie MARTIN' in fiches, 'une fiche avec seulement le technicien a été jetée : %s' % fiches)
+    await t.fermer()
+    return t
+
+
 TESTS = [test_identite_et_numeros, test_photos_conservees, test_rapport_pdf_et_word,
          test_historique_et_menage, test_reglages, test_sav_et_audit, test_dictee, test_import_clients,
-         test_annuaire, test_chrono_plusieurs_jours, test_formation, test_fiche_responsable_sav]
+         test_annuaire, test_chrono_plusieurs_jours, test_formation, test_fiche_responsable_sav,
+         test_balayage_formation_fiches]
 # BFR_TEST=nom_du_test : ne lancer qu'un seul test (ex. BFR_TEST=test_rapport_pdf_et_word)
 if os.environ.get('BFR_TEST'):
     TESTS = [f for f in TESTS if f.__name__ == os.environ['BFR_TEST']]

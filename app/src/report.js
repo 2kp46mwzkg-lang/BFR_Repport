@@ -555,11 +555,13 @@
      c'est son sujet. */
   function sujetsDe(f) {
     f = f || {};
-    let sujets = Array.isArray(f.sujets) ? f.sujets.filter(x => INTITULES_FORMATION.indexOf(x) >= 0) : [];
+    // un sujet absent de la liste (liste modifiée depuis) est gardé, après ceux de la liste
+    let sujets = Array.isArray(f.sujets) ? f.sujets.map(x => valeur(x).trim()).filter(Boolean) : [];
     let intitule = valeur(f.intitule).trim();
     if (!Array.isArray(f.sujets) && INTITULES_FORMATION.indexOf(intitule) >= 0) { sujets = [intitule]; intitule = ''; }
+    const rang = (x) => { const k = INTITULES_FORMATION.indexOf(x); return k < 0 ? INTITULES_FORMATION.length : k; };
     sujets = sujets.filter((x, k) => sujets.indexOf(x) === k)
-      .sort((a, b) => INTITULES_FORMATION.indexOf(a) - INTITULES_FORMATION.indexOf(b));
+      .map((x, k) => ({ x: x, k: k })).sort((a, b) => (rang(a.x) - rang(b.x)) || (a.k - b.k)).map(o => o.x);
     return { sujets: sujets, intitule: intitule };
   }
   /* Titre de la session : les sujets choisis puis le sujet écrit à la main,
@@ -612,7 +614,9 @@
     const signes = ps.filter(participantSigne).length;
     const manques = [];
     if (!f.titre) manques.push('le sujet');
+    const duree = dureeFormation(f);
     if (!f.debut || !f.fin) manques.push('les horaires');
+    else if (!duree || duree > 12 * 60) manques.push('des horaires cohérents (durée ' + (texteMinutes(duree) || '0 min') + ')');
     if (!f.points.length) manques.push('le programme');
     if (!f.methodes.length) manques.push("la méthode d'évaluation");
     if (!ps.length) manques.push('les participants');
@@ -620,7 +624,7 @@
     if (ps.length && signes < ps.length) manques.push((ps.length - signes) + (ps.length - signes > 1 ? ' signatures' : ' signature'));
     return {
       f: f, participants: ps, n: ps.length, acquis: c.acquis, consolider: c.consolider, non: c.non,
-      evalues: evalues, signes: signes, manques: manques, complet: !manques.length, duree: dureeFormation(f)
+      evalues: evalues, signes: signes, manques: manques, complet: !manques.length, duree: duree
     };
   }
   /* Évènement réellement saisi (les évènements créés puis abandonnés sont ignorés). */
@@ -673,7 +677,7 @@
     constats.forEach(function (e) {
       parCategorie[e.categorie || 'INFO'] = (parCategorie[e.categorie || 'INFO'] || 0) + 1;
     });
-    evs.forEach(function (e) { if (e.domaine) parDomaine[e.domaine] = (parDomaine[e.domaine] || 0) + 1; });
+    evs.forEach(function (e) { if (e.domaine && !estFormation(e)) parDomaine[e.domaine] = (parDomaine[e.domaine] || 0) + 1; });
     const duree = dureeTotale(intervention);
     const nbPhotos = evs.reduce(function (a, e) { return a + (e.photos || []).length; }, 0) +
       (intervention.photosLibres || []).length;
@@ -684,7 +688,9 @@
       domaines: domaines, categories: categories, evenements: evs, parCategorie: parCategorie,
       travaux: travaux, constats: constats, corriges: constats.filter(e => e.corrige).length,
       formations: formations, bilansFormation: bilans,
-      formes: { n: somme('n'), acquis: somme('acquis'), consolider: somme('consolider'), non: somme('non'), signes: somme('signes') },
+      formes: { n: somme('n'), acquis: somme('acquis'), consolider: somme('consolider'), non: somme('non'), signes: somme('signes'),
+        // une même personne à deux sessions n'est comptée qu'une fois parmi les « opérateurs formés »
+        distincts: new Set([].concat.apply([], bilans.map(b => b.participants.map(p => valeur(p.nom).trim().toLowerCase())))).size },
       parDomaine: parDomaine, duree: duree, nbPhotos: nbPhotos,
       securite: (parCategorie.SECURITE || 0) + (parCategorie.URGENT || 0)
     };
@@ -1329,11 +1335,13 @@
       const duree = texteMinutes(b.duree);
       const docs = f.documents.map(x => this.L(DOCUMENTS_FORMATION[x])).concat(f.autresDocuments ? [f.autresDocuments] : []);
       const sujets = titreFormation(f, t => this.L(t));
+      const plusieurs = (f.sujets.length + (f.intitule ? 1 : 0)) > 1;
+      const coupe = Pdf.measure(sujets, 9.6, true) > this.CW * 0.56 - 30;   // le bandeau l'a raccourci
       this.kv([
         ['Formateur', f.formateur || nomTechnicien(i, s) || '—'],
         ['Date et horaires', [frDate(f.date), horaires].filter(Boolean).join(', ') + (duree ? ' (' + duree + ')' : '') || '—'],
         // plusieurs sujets : la liste complète, sur toute la largeur (le bandeau peut la couper)
-        [(f.sujets.length + (f.intitule ? 1 : 0)) > 1 ? 'Sujets' : '', sujets, true],
+        [plusieurs ? 'Sujets' : (coupe ? 'Sujet' : ''), sujets, true],
         ["Méthode d'évaluation", f.methodes.map(m => this.L(METHODES_FORMATION[m])).join(', ') || '—', true],
         ['Documents remis', docs.join(', ') || '—', true]
       ]);
@@ -1376,7 +1384,7 @@
       if (e.travaux.length) cases.push({ n: e.travaux.length, libelle: 'Travaux réalisés', couleur: COULEUR_TRAVAIL });
       (this.s.categories || []).filter(c => e.parCategorie[c.id])
         .forEach(c => cases.push({ n: e.parCategorie[c.id], libelle: c.libelle, couleur: c.couleur }));
-      if (e.formes.n) cases.push({ n: e.formes.n, libelle: 'Opérateurs formés', couleur: COULEUR_FORMATION });
+      if (e.formes.n) cases.push({ n: e.formes.distincts, libelle: 'Opérateurs formés', couleur: COULEUR_FORMATION });
       if (cases.length) {
         const nb = cases.length;
         const caseW = (this.CW - (nb - 1) * 5) / nb;
@@ -1878,7 +1886,7 @@
           if (!fs.length) continue;
           if (dernierTypeEtaitEvenement) { this.pdf.newPage(); this.enteteSuite(); }
           const titreSection = num(section, 'Formation des opérateurs');
-          const nb = this.etat.formes.n;
+          const nb = this.etat.formes.distincts;
           this.titre(titreSection, nb ? nb + ' ' + this.L(nb > 1 ? 'participants' : 'participant') : null, 150);
           for (let k = 0; k < fs.length; k++) {
             await this.blocFormation(fs[k], fs.length > 1 ? (k + 1) + '/' + fs.length : '', titreSection);
@@ -2290,7 +2298,7 @@
             .map(c => [{ texte: this.L(c.libelle) }, { texte: String(this.etat.parCategorie[c.id]), align: 'center', gras: true }]))
             .concat(this.etat.formes.n
               ? [[{ texte: this.L('Opérateurs formés'), gras: true, couleur: hexDocx(COULEUR_FORMATION) },
-                  { texte: String(this.etat.formes.n), align: 'center', gras: true, couleur: hexDocx(COULEUR_FORMATION) }]]
+                  { texte: String(this.etat.formes.distincts), align: 'center', gras: true, couleur: hexDocx(COULEUR_FORMATION) }]]
               : []);
           if (lignes.length) d.tableau([[{ texte: 'Catégorie', gras: true }, { texte: 'Nombre', gras: true, align: 'center' }]].concat(lignes),
             { largeurs: [70, 30], enteteFond: 'E8EFFA' });
@@ -2407,7 +2415,7 @@
           const fs = formationsDe(i);
           if (!fs.length) continue;
           if (dernierTypeEtaitEvenement) d.sautDePage();
-          const nb = this.etat.formes.n;
+          const nb = this.etat.formes.distincts;
           d.bandeau(this.L(num(section, 'Formation des opérateurs')) +
             (nb ? ' — ' + nb + ' ' + this.L(nb > 1 ? 'participants' : 'participant') : ''));
           for (let k = 0; k < fs.length; k++) {
@@ -2603,7 +2611,7 @@
       nbTravaux: String(e.travaux.length), nbConstats: String(e.constats.length),
       travauxTermines: travauxTermines(i), faitLe: frDate(i.faitLe),
       nbCorriges: String(e.corriges),
-      nbFormations: String(e.formations.length), nbFormes: String(e.formes.n),
+      nbFormations: String(e.formations.length), nbFormes: String(e.formes.distincts),
       formation: e.formations.length ? texteFormes(e, t => t) : '',
       typeIntervention: (TYPES_INTERVENTION[i.typeIntervention] || {}).libelle || '',
       titreRapport: titreRapport(i),

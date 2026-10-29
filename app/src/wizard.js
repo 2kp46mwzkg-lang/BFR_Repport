@@ -364,7 +364,10 @@
       if (this.etape > 1) nav.push('<button class="btn grey" data-a="retour">← Retour</button>');
       if (this.etape < 4) nav.push('<button class="btn" data-a="suivant">Suivant →</button>');
       else nav.push('<button class="btn or" data-a="enregistrer">' + ((window.ICO && window.ICO.check(16)) || '') + ' Terminer</button>');
-      if (formation ? Report.evRenseigne(this.ev) : this.ev.domaine) nav.push('<button class="btn danger" data-a="supprimer">Supprimer</button>');
+      if (formation ? Report.evRenseigne(this.ev) : this.ev.domaine) {
+        nav.push('<button class="btn danger" data-a="supprimer" aria-label="Supprimer" title="Supprimer">' +
+          ((window.ICO && window.ICO.trash && window.ICO.trash(16)) || '') + '<span class="nav-texte">Supprimer</span></button>');
+      }
       this.overlay.querySelector('#assistantNav').innerHTML = nav.join('');
       this.corps.scrollTop = garderPosition ? haut : 0;
     }
@@ -694,7 +697,8 @@
       const marque = (ok) => ok ? '<span class="fm-ok">✓</span>' : '<span class="fm-ko">!</span>';
       const lignes = [
         [1, f.sujets.length + (f.intitule ? 1 : 0) > 1 ? 'Sujets' : 'Sujet', f.titre || '—', !!f.titre],
-        [2, 'Date et horaires', [Report.frDate(f.date), [f.debut, f.fin].filter(Boolean).join(' - ')].filter(Boolean).join(', ') || '—', !!(f.debut && f.fin)],
+        [2, 'Date et horaires', [Report.frDate(f.date), [f.debut, f.fin].filter(Boolean).join(' - ')].filter(Boolean).join(', ') || '—',
+          !b.manques.some(m => m.indexOf('horaires') >= 0)],
         [2, 'Programme', f.points.length ? f.points.length + ' point(s) abordé(s)' : 'aucun point coché', f.points.length > 0],
         [2, "Méthode d'évaluation", f.methodes.map(m => (Report.METHODES_FORMATION || {})[m]).join(', ') || 'non indiquée', f.methodes.length > 0],
         [3, 'Participants', b.n ? String(b.n) : 'aucun', b.n > 0],

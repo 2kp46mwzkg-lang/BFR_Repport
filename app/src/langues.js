@@ -520,6 +520,7 @@
     'Formation': { en: 'Training', de: 'Schulung', nl: 'Opleiding', es: 'Formación', it: 'Formazione', pt: 'Formação' },
     'Opérateurs formés': { en: 'Operators trained', de: 'Geschulte Bediener', nl: 'Opgeleide operators', es: 'Operarios formados', it: 'Operatori formati', pt: 'Operadores formados' },
     'Sujets': { en: 'Topics', de: 'Themen', nl: 'Onderwerpen', es: 'Temas', it: 'Argomenti', pt: 'Temas' },
+    'Sujet': { en: 'Topic', de: 'Thema', nl: 'Onderwerp', es: 'Tema', it: 'Argomento', pt: 'Tema' },
     'Formateur': { en: 'Trainer', de: 'Trainer', nl: 'Opleider', es: 'Formador', it: 'Formatore', pt: 'Formador' },
     'Date et horaires': { en: 'Date and times', de: 'Datum und Uhrzeiten', nl: 'Datum en tijden', es: 'Fecha y horario', it: 'Data e orari', pt: 'Data e horário' },
     "Méthode d'évaluation": { en: 'Assessment method', de: 'Bewertungsmethode', nl: 'Beoordelingsmethode', es: 'Método de evaluación', it: 'Metodo di valutazione', pt: 'Método de avaliação' },
