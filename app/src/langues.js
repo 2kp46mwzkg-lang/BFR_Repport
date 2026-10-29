@@ -513,7 +513,97 @@
     },
     'Rapport': {
       en: 'Report', de: 'Bericht', nl: 'Verslag', es: 'Informe', it: 'Rapporto', pt: 'Relatório'
-    }
+    },
+
+    /* Formation des opérateurs */
+    'Formation des opérateurs': { en: 'Operator training', de: 'Bedienerschulung', nl: 'Opleiding van de operators', es: 'Formación de los operarios', it: 'Formazione degli operatori', pt: 'Formação dos operadores' },
+    'Formation': { en: 'Training', de: 'Schulung', nl: 'Opleiding', es: 'Formación', it: 'Formazione', pt: 'Formação' },
+    'Opérateurs formés': { en: 'Operators trained', de: 'Geschulte Bediener', nl: 'Opgeleide operators', es: 'Operarios formados', it: 'Operatori formati', pt: 'Operadores formados' },
+    'Sujets': { en: 'Topics', de: 'Themen', nl: 'Onderwerpen', es: 'Temas', it: 'Argomenti', pt: 'Temas' },
+    'Formateur': { en: 'Trainer', de: 'Trainer', nl: 'Opleider', es: 'Formador', it: 'Formatore', pt: 'Formador' },
+    'Date et horaires': { en: 'Date and times', de: 'Datum und Uhrzeiten', nl: 'Datum en tijden', es: 'Fecha y horario', it: 'Data e orari', pt: 'Data e horário' },
+    "Méthode d'évaluation": { en: 'Assessment method', de: 'Bewertungsmethode', nl: 'Beoordelingsmethode', es: 'Método de evaluación', it: 'Metodo di valutazione', pt: 'Método de avaliação' },
+    'Documents remis': { en: 'Documents provided', de: 'Übergebene Unterlagen', nl: 'Overhandigde documenten', es: 'Documentos entregados', it: 'Documenti consegnati', pt: 'Documentos entregues' },
+    'Programme de la formation (points abordés)': { en: 'Training programme (topics covered)', de: 'Schulungsprogramm (behandelte Themen)', nl: 'Opleidingsprogramma (behandelde onderwerpen)', es: 'Programa de la formación (temas tratados)', it: 'Programma della formazione (argomenti trattati)', pt: 'Programa da formação (temas abordados)' },
+    'Contenu et observations': { en: 'Content and observations', de: 'Inhalt und Bemerkungen', nl: 'Inhoud en opmerkingen', es: 'Contenido y observaciones', it: 'Contenuto e osservazioni', pt: 'Conteúdo e observações' },
+    "Feuille d'émargement": { en: 'Attendance sheet', de: 'Teilnehmerliste', nl: 'Aanwezigheidslijst', es: 'Hoja de asistencia', it: 'Foglio presenze', pt: 'Folha de presenças' },
+    'Aucun participant enregistré.': { en: 'No participant recorded.', de: 'Kein Teilnehmer erfasst.', nl: 'Geen deelnemer geregistreerd.', es: 'Ningún participante registrado.', it: 'Nessun partecipante registrato.', pt: 'Nenhum participante registado.' },
+    'N°': { en: 'No.', de: 'Nr.', nl: 'Nr.', es: 'N.º', it: 'N.', pt: 'N.º' },
+    'Nom et prénom': { en: 'Full name', de: 'Name und Vorname', nl: 'Naam en voornaam', es: 'Nombre y apellidos', it: 'Nome e cognome', pt: 'Nome completo' },
+    'Fonction / poste': { en: 'Job / position', de: 'Funktion / Arbeitsplatz', nl: 'Functie / werkpost', es: 'Función / puesto', it: 'Funzione / postazione', pt: 'Função / posto' },
+    'Évaluation': { en: 'Assessment', de: 'Bewertung', nl: 'Beoordeling', es: 'Evaluación', it: 'Valutazione', pt: 'Avaliação' },
+    'Signature': { en: 'Signature', de: 'Unterschrift', nl: 'Handtekening', es: 'Firma', it: 'Firma', pt: 'Assinatura' },
+    'Non évalué': { en: 'Not assessed', de: 'Nicht bewertet', nl: 'Niet beoordeeld', es: 'No evaluado', it: 'Non valutato', pt: 'Não avaliado' },
+    'Signé': { en: 'Signed', de: 'Unterschrieben', nl: 'Ondertekend', es: 'Firmado', it: 'Firmato', pt: 'Assinado' },
+    'Non signé': { en: 'Not signed', de: 'Nicht unterschrieben', nl: 'Niet ondertekend', es: 'Sin firmar', it: 'Non firmato', pt: 'Não assinado' },
+    'participant': { en: 'participant', de: 'Teilnehmer', nl: 'deelnemer', es: 'participante', it: 'partecipante', pt: 'participante' },
+    'participants': { en: 'participants', de: 'Teilnehmer', nl: 'deelnemers', es: 'participantes', it: 'partecipanti', pt: 'participantes' },
+    'session': { en: 'session', de: 'Sitzung', nl: 'sessie', es: 'sesión', it: 'sessione', pt: 'sessão' },
+    'sessions': { en: 'sessions', de: 'Sitzungen', nl: 'sessies', es: 'sesiones', it: 'sessioni', pt: 'sessões' },
+    'Acquis': { en: 'Competent', de: 'Erworben', nl: 'Verworven', es: 'Adquirido', it: 'Acquisito', pt: 'Adquirido' },
+    'À consolider': { en: 'Needs reinforcement', de: 'Zu festigen', nl: 'Te versterken', es: 'A reforzar', it: 'Da consolidare', pt: 'A consolidar' },
+    'Non acquis': { en: 'Not yet competent', de: 'Nicht erworben', nl: 'Niet verworven', es: 'No adquirido', it: 'Non acquisito', pt: 'Não adquirido' },
+    'Émargement': { en: 'Signatures', de: 'Unterschriften', nl: 'Handtekeningen', es: 'Firmas', it: 'Firme', pt: 'Assinaturas' },
+    'Bilan': { en: 'Summary', de: 'Bilanz', nl: 'Overzicht', es: 'Balance', it: 'Bilancio', pt: 'Balanço' },
+    'Chaque participant atteste, par sa signature, avoir suivi la formation décrite ci-dessus.': {
+      en: 'Each participant certifies, by signing, that they attended the training described above.',
+      de: 'Jeder Teilnehmer bestätigt mit seiner Unterschrift, an der oben beschriebenen Schulung teilgenommen zu haben.',
+      nl: 'Elke deelnemer verklaart met zijn handtekening de hierboven beschreven opleiding te hebben gevolgd.',
+      es: 'Cada participante certifica con su firma haber seguido la formación descrita arriba.',
+      it: 'Ogni partecipante attesta, con la propria firma, di aver seguito la formazione sopra descritta.',
+      pt: 'Cada participante atesta, com a sua assinatura, ter frequentado a formação acima descrita.'
+    },
+    "Le formateur atteste l'évaluation indiquée pour chaque participant.": {
+      en: 'The trainer certifies the assessment shown for each participant.',
+      de: 'Der Trainer bestätigt die für jeden Teilnehmer angegebene Bewertung.',
+      nl: 'De opleider bevestigt de voor elke deelnemer vermelde beoordeling.',
+      es: 'El formador certifica la evaluación indicada para cada participante.',
+      it: 'Il formatore attesta la valutazione indicata per ciascun partecipante.',
+      pt: 'O formador atesta a avaliação indicada para cada participante.'
+    },
+    'Un complément de formation est recommandé pour les participants « À consolider » ou « Non acquis ».': {
+      en: 'Additional training is recommended for participants rated "Needs reinforcement" or "Not yet competent".',
+      de: 'Für Teilnehmer mit „Zu festigen“ oder „Nicht erworben“ wird eine ergänzende Schulung empfohlen.',
+      nl: 'Een aanvullende opleiding wordt aanbevolen voor deelnemers met "Te versterken" of "Niet verworven".',
+      es: 'Se recomienda una formación complementaria para los participantes «A reforzar» o «No adquirido».',
+      it: 'Si raccomanda una formazione integrativa per i partecipanti «Da consolidare» o «Non acquisito».',
+      pt: 'Recomenda-se uma formação complementar para os participantes «A consolidar» ou «Não adquirido».'
+    },
+    'Le client confirme que les opérateurs listés dans la partie « Formation des opérateurs » ont suivi la formation décrite.': {
+      en: 'The customer confirms that the operators listed in the "Operator training" section attended the training described.',
+      de: 'Der Kunde bestätigt, dass die im Abschnitt „Bedienerschulung“ aufgeführten Bediener an der beschriebenen Schulung teilgenommen haben.',
+      nl: 'De klant bevestigt dat de operators vermeld in het deel "Opleiding van de operators" de beschreven opleiding hebben gevolgd.',
+      es: 'El cliente confirma que los operarios enumerados en el apartado «Formación de los operarios» han seguido la formación descrita.',
+      it: 'Il cliente conferma che gli operatori elencati nella sezione «Formazione degli operatori» hanno seguito la formazione descritta.',
+      pt: 'O cliente confirma que os operadores indicados na secção «Formação dos operadores» frequentaram a formação descrita.'
+    },
+    /* Intitulés, programme, évaluation et documents proposés par l'assistant */
+    'Conduite de la machine': { en: 'Machine operation', de: 'Bedienung der Maschine', nl: 'Bediening van de machine', es: 'Manejo de la máquina', it: 'Conduzione della macchina', pt: 'Operação da máquina' },
+    'Changement de format': { en: 'Format changeover', de: 'Formatwechsel', nl: 'Formaatwissel', es: 'Cambio de formato', it: 'Cambio formato', pt: 'Mudança de formato' },
+    'Nettoyage et hygiène': { en: 'Cleaning and hygiene', de: 'Reinigung und Hygiene', nl: 'Reiniging en hygiëne', es: 'Limpieza e higiene', it: 'Pulizia e igiene', pt: 'Limpeza e higiene' },
+    'Maintenance de premier niveau': { en: 'First-level maintenance', de: 'Wartung der ersten Ebene', nl: 'Eerstelijnsonderhoud', es: 'Mantenimiento de primer nivel', it: 'Manutenzione di primo livello', pt: 'Manutenção de primeiro nível' },
+    'Sécurité de la machine': { en: 'Machine safety', de: 'Maschinensicherheit', nl: 'Machineveiligheid', es: 'Seguridad de la máquina', it: 'Sicurezza della macchina', pt: 'Segurança da máquina' },
+    'Prise en main après mise en service': { en: 'Handover after commissioning', de: 'Einweisung nach der Inbetriebnahme', nl: 'Overdracht na inbedrijfstelling', es: 'Capacitación tras la puesta en marcha', it: 'Presa in carico dopo la messa in servizio', pt: 'Familiarização após a colocação em serviço' },
+    "Consignes de sécurité : arrêts d'urgence, protecteurs, consignation": { en: 'Safety instructions: emergency stops, guards, lockout/tagout', de: 'Sicherheitshinweise: Not-Halt, Schutzeinrichtungen, Freischalten und Sichern', nl: 'Veiligheidsvoorschriften: noodstoppen, afschermingen, vergrendeling', es: 'Consignas de seguridad: paradas de emergencia, protecciones, consignación', it: 'Istruzioni di sicurezza: arresti di emergenza, ripari, messa in sicurezza', pt: 'Instruções de segurança: paragens de emergência, proteções, consignação' },
+    'Présentation de la machine et de ses organes': { en: 'Presentation of the machine and its components', de: 'Vorstellung der Maschine und ihrer Baugruppen', nl: 'Voorstelling van de machine en haar onderdelen', es: 'Presentación de la máquina y sus componentes', it: 'Presentazione della macchina e dei suoi organi', pt: 'Apresentação da máquina e dos seus componentes' },
+    'Mise en marche et arrêt': { en: 'Start-up and shutdown', de: 'Einschalten und Ausschalten', nl: 'Opstarten en stoppen', es: 'Puesta en marcha y parada', it: 'Avviamento e arresto', pt: 'Arranque e paragem' },
+    'Conduite en production (pupitre et écran)': { en: 'Operation in production (control panel and HMI)', de: 'Bedienung in der Produktion (Bedienpult und Bildschirm)', nl: 'Bediening in productie (bedieningspaneel en scherm)', es: 'Manejo en producción (pupitre y pantalla)', it: 'Conduzione in produzione (pulpito e schermo)', pt: 'Operação em produção (consola e ecrã)' },
+    'Changement de format et réglages': { en: 'Format changeover and adjustments', de: 'Formatwechsel und Einstellungen', nl: 'Formaatwissel en afstellingen', es: 'Cambio de formato y ajustes', it: 'Cambio formato e regolazioni', pt: 'Mudança de formato e afinações' },
+    'Alarmes, défauts et remise en route': { en: 'Alarms, faults and restart', de: 'Alarme, Störungen und Wiederanlauf', nl: 'Alarmen, storingen en herstart', es: 'Alarmas, fallos y rearranque', it: 'Allarmi, guasti e riavvio', pt: 'Alarmes, falhas e rearranque' },
+    'Maintenance de premier niveau : graissage, contrôles': { en: 'First-level maintenance: lubrication, checks', de: 'Wartung der ersten Ebene: Schmierung, Kontrollen', nl: 'Eerstelijnsonderhoud: smering, controles', es: 'Mantenimiento de primer nivel: engrase, controles', it: 'Manutenzione di primo livello: lubrificazione, controlli', pt: 'Manutenção de primeiro nível: lubrificação, controlos' },
+    'Mise en pratique sur la machine': { en: 'Hands-on practice on the machine', de: 'Praktische Übung an der Maschine', nl: 'Praktijkoefening op de machine', es: 'Práctica en la máquina', it: 'Esercitazione pratica sulla macchina', pt: 'Prática na máquina' },
+    'Observation au poste de travail': { en: 'Observation at the workstation', de: 'Beobachtung am Arbeitsplatz', nl: 'Observatie op de werkpost', es: 'Observación en el puesto de trabajo', it: 'Osservazione alla postazione di lavoro', pt: 'Observação no posto de trabalho' },
+    'Questions orales': { en: 'Oral questions', de: 'Mündliche Fragen', nl: 'Mondelinge vragen', es: 'Preguntas orales', it: 'Domande orali', pt: 'Perguntas orais' },
+    'Questionnaire écrit': { en: 'Written questionnaire', de: 'Schriftlicher Fragebogen', nl: 'Schriftelijke vragenlijst', es: 'Cuestionario escrito', it: 'Questionario scritto', pt: 'Questionário escrito' },
+    "Manuel d'utilisation": { en: 'User manual', de: 'Bedienungsanleitung', nl: 'Gebruikershandleiding', es: 'Manual de usuario', it: "Manuale d'uso", pt: 'Manual de utilização' },
+    'Modes opératoires / fiches de poste': { en: 'Operating procedures / workstation sheets', de: 'Arbeitsanweisungen / Arbeitsplatzblätter', nl: 'Werkinstructies / werkpostfiches', es: 'Procedimientos operativos / fichas de puesto', it: 'Procedure operative / schede di postazione', pt: 'Procedimentos operativos / fichas de posto' },
+    'Support de formation': { en: 'Training material', de: 'Schulungsunterlagen', nl: 'Opleidingsmateriaal', es: 'Material de formación', it: 'Materiale formativo', pt: 'Material de formação' },
+    'Opérateur': { en: 'Operator', de: 'Bediener', nl: 'Operator', es: 'Operario', it: 'Operatore', pt: 'Operador' },
+    'Conducteur de ligne': { en: 'Line operator', de: 'Linienführer', nl: 'Lijnoperator', es: 'Conductor de línea', it: 'Conduttore di linea', pt: 'Condutor de linha' },
+    "Chef d'équipe": { en: 'Team leader', de: 'Schichtleiter', nl: 'Ploegleider', es: 'Jefe de equipo', it: 'Capo squadra', pt: 'Chefe de equipa' },
+    'Régleur': { en: 'Setter', de: 'Einrichter', nl: 'Insteller', es: 'Ajustador', it: 'Attrezzista', pt: 'Afinador' },
+    'Technicien de maintenance': { en: 'Maintenance technician', de: 'Instandhaltungstechniker', nl: 'Onderhoudstechnicus', es: 'Técnico de mantenimiento', it: 'Tecnico di manutenzione', pt: 'Técnico de manutenção' },
+    'Responsable de production': { en: 'Production manager', de: 'Produktionsleiter', nl: 'Productieverantwoordelijke', es: 'Responsable de producción', it: 'Responsabile di produzione', pt: 'Responsável de produção' }
   };
 
   /* --- Libellés qui peuvent être traduits en début de chaîne ------------ */

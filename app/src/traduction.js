@@ -270,6 +270,18 @@
       (i.evenements || []).forEach(function (ev, k) {
         ajouter(ev, 'texte', 'Évènement ' + (k + 1));
         (ev.photos || []).forEach(function (ph) { ajouter(ph, 'legende', 'Légende de photo'); });
+        /* Formation : intitulé, points et documents écrits à la main. Les libellés
+           proposés par l'appli sont traduits par le pack de langue (langues.js). */
+        const f = ev.nature === 'formation' && ev.formation;
+        if (f) {
+          const R = global.Report || {};
+          // sujet écrit à la main (les sujets choisis dans la liste sont traduits par le pack de langue)
+          if ((R.INTITULES_FORMATION || []).indexOf(f.intitule) < 0) ajouter(f, 'intitule', 'Sujet de formation');
+          (f.points || []).forEach(function (pt) {
+            if (pt && !(R.POINTS_FORMATION || []).some(function (x) { return x.id === pt.id; })) ajouter(pt, 'libelle', 'Point de formation');
+          });
+          ajouter(f, 'autresDocuments', 'Documents remis');
+        }
       });
       (i.photosLibres || []).forEach(function (ph) { ajouter(ph, 'legende', 'Légende de photo'); });
       (i.pieces || []).forEach(function (p, k) {
@@ -293,7 +305,13 @@
 
       const copie = Object.assign({}, i, {
         evenements: (i.evenements || []).map(function (ev) {
-          return Object.assign({}, ev, { photos: (ev.photos || []).map(function (ph) { return Object.assign({}, ph); }) });
+          const copieEv = Object.assign({}, ev, { photos: (ev.photos || []).map(function (ph) { return Object.assign({}, ph); }) });
+          if (ev.formation) {
+            copieEv.formation = Object.assign({}, ev.formation, {
+              points: (ev.formation.points || []).map(function (pt) { return Object.assign({}, pt); })
+            });
+          }
+          return copieEv;
         }),
         photosLibres: (i.photosLibres || []).map(function (ph) { return Object.assign({}, ph); }),
         pieces: (i.pieces || []).map(function (p) { return Object.assign({}, p); }),

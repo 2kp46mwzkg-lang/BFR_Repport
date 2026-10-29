@@ -419,6 +419,31 @@
     };
   }
 
+  /* Mention composée de plusieurs phrases (mention client + pièces + trajet +
+     formation) : traduite en entier si elle est connue, sinon phrase par phrase. */
+  function traduirePhrases(txt, langue) {
+    if (!global.I18N || !langue || langue === 'fr') return txt;
+    const entier = global.I18N.traduire(txt, langue);
+    if (entier !== txt) return entier;
+    const morceaux = (String(txt).match(/[^.!?]+[.!?]*/g) || []).map(m => m.trim()).filter(Boolean);
+    const traduits = morceaux.map(m => global.I18N.traduire(m, langue));
+    return traduits.some((t, k) => t !== morceaux[k]) ? traduits.join(' ') : txt;
+  }
+
+  /* Pièces imprimées dans le rapport : celles posées ou laissées sur site. Une pièce
+     préparée par le responsable SAV n'y figure que si le technicien l'a indiquée
+     « laissée sur site » (rapportée ou sans choix : absente du rapport du client). */
+  function piecesRapport(i) {
+    return ((i && i.pieces) || []).filter(p => p && (p.denomination || p.designation || p.reference || p.quantite) &&
+      (p.prevue ? p.statut === 'laissee' : p.statut !== 'rapportee'));
+  }
+
+  /* Place à réserver sous le titre « Pièces de rechange » : en-tête + 2 lignes du tableau. */
+  function reservePieces(pcs) {
+    const avecPhotos = (pcs || []).some(it => it && it.photo);
+    return 20 + (avecPhotos ? 80 : 22) * Math.min((pcs || []).length, 2) + 10 - 16;
+  }
+
   /* ===================== Canevas par défaut =========================== */
   function canevasDefaut() {
     return {
@@ -472,6 +497,159 @@
     return null;
   }
 
+  /* ===================== Formation des opérateurs =====================
+     Troisième nature d'évènement : une session de formation donnée aux
+     opérateurs du client. Elle réunit tout ce qui prouve la formation :
+     intitulé, date et horaires, formateur, programme (points abordés),
+     méthode d'évaluation, documents remis, et pour chaque participant sa
+     fonction, son évaluation et sa signature (feuille d'émargement). */
+  const COULEUR_FORMATION = '#6d28d9';
+  const FOND_FORMATION = '#ede9fe';
+  function estFormation(ev) { return !!ev && ev.nature === 'formation'; }
+  function estConstat(ev) { return !!ev && !estTravail(ev) && !estFormation(ev); }
+  const INTITULES_FORMATION = ['Conduite de la machine', 'Changement de format', 'Nettoyage et hygiène',
+    'Maintenance de premier niveau', 'Sécurité de la machine', 'Prise en main après mise en service'];
+  const POINTS_FORMATION = [
+    { id: 'securite', libelle: "Consignes de sécurité : arrêts d'urgence, protecteurs, consignation" },
+    { id: 'presentation', libelle: 'Présentation de la machine et de ses organes' },
+    { id: 'marche', libelle: 'Mise en marche et arrêt' },
+    { id: 'conduite', libelle: 'Conduite en production (pupitre et écran)' },
+    { id: 'format', libelle: 'Changement de format et réglages' },
+    { id: 'alarmes', libelle: 'Alarmes, défauts et remise en route' },
+    { id: 'nettoyage', libelle: 'Nettoyage et hygiène' },
+    { id: 'maintenance', libelle: 'Maintenance de premier niveau : graissage, contrôles' }
+  ];
+  const METHODES_FORMATION = {
+    pratique: 'Mise en pratique sur la machine',
+    observation: 'Observation au poste de travail',
+    oral: 'Questions orales',
+    ecrit: 'Questionnaire écrit'
+  };
+  const DOCUMENTS_FORMATION = {
+    manuel: "Manuel d'utilisation",
+    modes: 'Modes opératoires / fiches de poste',
+    support: 'Support de formation'
+  };
+  const EVALUATIONS = {
+    acquis: { libelle: 'Acquis', couleur: '#15803d', fond: '#dcfce7' },
+    consolider: { libelle: 'À consolider', couleur: '#c2410c', fond: '#ffedd5' },
+    non: { libelle: 'Non acquis', couleur: '#b91c1c', fond: '#fee2e2' }
+  };
+  const FONCTIONS_OPERATEUR = ['Opérateur', 'Conducteur de ligne', "Chef d'équipe", 'Régleur',
+    'Technicien de maintenance', 'Responsable de production'];
+
+  function heureCourte(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+  function nouvelleFormation(opts) {
+    opts = opts || {};
+    const d = opts.maintenant || new Date();
+    return {
+      // sujets : intitulés proposés, choisis à plusieurs ; intitule : sujet ou précision écrit à la main
+      sujets: [], intitule: '', date: dateLocale(d), debut: heureCourte(d), fin: '',
+      formateur: valeur(opts.formateur),
+      points: [], methodes: [], documents: [], autresDocuments: '',
+      participants: []
+    };
+  }
+  /* Sujets choisis, dans l'ordre de la liste proposée. Une formation enregistrée
+     avant le choix multiple avait un seul intitulé : s'il fait partie de la liste,
+     c'est son sujet. */
+  function sujetsDe(f) {
+    f = f || {};
+    let sujets = Array.isArray(f.sujets) ? f.sujets.filter(x => INTITULES_FORMATION.indexOf(x) >= 0) : [];
+    let intitule = valeur(f.intitule).trim();
+    if (!Array.isArray(f.sujets) && INTITULES_FORMATION.indexOf(intitule) >= 0) { sujets = [intitule]; intitule = ''; }
+    sujets = sujets.filter((x, k) => sujets.indexOf(x) === k)
+      .sort((a, b) => INTITULES_FORMATION.indexOf(a) - INTITULES_FORMATION.indexOf(b));
+    return { sujets: sujets, intitule: intitule };
+  }
+  /* Titre de la session : les sujets choisis puis le sujet écrit à la main,
+     chacun traduit par L (libellés du pack de langue). */
+  function titreFormation(f, L) {
+    L = L || (t => t);
+    const sj = sujetsDe(f);
+    return sj.sujets.map(x => L(x)).concat(sj.intitule ? [L(sj.intitule)] : []).join(', ');
+  }
+  /* Formation d'un évènement, complétée et nettoyée (jamais modifiée). */
+  function formationDe(ev) {
+    const f = (ev && ev.formation) || {};
+    const sj = sujetsDe(f);
+    return {
+      sujets: sj.sujets, intitule: sj.intitule, titre: titreFormation(f),
+      date: valeur(f.date) || (ev && ev.heure && !isNaN(new Date(ev.heure)) ? dateLocale(new Date(ev.heure)) : ''),
+      debut: valeur(f.debut), fin: valeur(f.fin), formateur: valeur(f.formateur).trim(),
+      points: (Array.isArray(f.points) ? f.points : []).filter(pt => pt && valeur(pt.libelle).trim()),
+      methodes: (Array.isArray(f.methodes) ? f.methodes : []).filter(m => METHODES_FORMATION[m]),
+      documents: (Array.isArray(f.documents) ? f.documents : []).filter(x => DOCUMENTS_FORMATION[x]),
+      autresDocuments: valeur(f.autresDocuments).trim(),
+      participants: (Array.isArray(f.participants) ? f.participants : []).filter(p => p && valeur(p.nom).trim())
+    };
+  }
+  function minutesDe(h) {
+    const m = /^(\d{1,2}):(\d{2})/.exec(valeur(h));
+    return m ? (+m[1]) * 60 + (+m[2]) : null;
+  }
+  /* Durée de la session en minutes (une session qui passe minuit est comptée). */
+  function dureeFormation(f) {
+    const a = minutesDe(f && f.debut), b = minutesDe(f && f.fin);
+    if (a === null || b === null) return 0;
+    return (b - a + 1440) % 1440;
+  }
+  function texteMinutes(min) {
+    if (!min) return '';
+    const h = Math.floor(min / 60), m = min % 60;
+    return h ? h + ' h ' + pad2(m) : m + ' min';
+  }
+  /* Signé : la signature est là, ou elle a été recueillie (date) et attend
+     d'être relue dans la base photos. */
+  function participantSigne(p) { return !!(p && (valeur(p.signature) || p.signeA)); }
+  /* Bilan d'une session : comptes et éléments manquants pour valider la formation. */
+  function bilanFormation(ev) {
+    const f = formationDe(ev);
+    const ps = f.participants;
+    const c = { acquis: 0, consolider: 0, non: 0 };
+    ps.forEach(p => { if (c[p.evaluation] !== undefined) c[p.evaluation]++; });
+    const evalues = c.acquis + c.consolider + c.non;
+    const signes = ps.filter(participantSigne).length;
+    const manques = [];
+    if (!f.titre) manques.push('le sujet');
+    if (!f.debut || !f.fin) manques.push('les horaires');
+    if (!f.points.length) manques.push('le programme');
+    if (!f.methodes.length) manques.push("la méthode d'évaluation");
+    if (!ps.length) manques.push('les participants');
+    if (ps.length && evalues < ps.length) manques.push((ps.length - evalues) + (ps.length - evalues > 1 ? ' évaluations' : ' évaluation'));
+    if (ps.length && signes < ps.length) manques.push((ps.length - signes) + (ps.length - signes > 1 ? ' signatures' : ' signature'));
+    return {
+      f: f, participants: ps, n: ps.length, acquis: c.acquis, consolider: c.consolider, non: c.non,
+      evalues: evalues, signes: signes, manques: manques, complet: !manques.length, duree: dureeFormation(f)
+    };
+  }
+  /* Évènement réellement saisi (les évènements créés puis abandonnés sont ignorés). */
+  function evRenseigne(e) {
+    if (!e) return false;
+    if (e.domaine || valeur(e.texte)) return true;
+    const f = e.formation || {};
+    return estFormation(e) && (!!titreFormation(f) || (f.participants || []).some(p => p && valeur(p.nom).trim()));
+  }
+  function formationsDe(intervention) {
+    return ((intervention && intervention.evenements) || [])
+      .filter(e => estFormation(e) && evRenseigne(e))
+      .sort((a, b) => new Date(a.heure || 0) - new Date(b.heure || 0));
+  }
+  /* « 2 sessions — 6 participants (Acquis : 5, À consolider : 1) » */
+  function texteFormes(e, L) {
+    const ns = e.formations.length, f = e.formes;
+    let t = ns + ' ' + L(ns > 1 ? 'sessions' : 'session') + ' — ' + f.n + ' ' + L(f.n > 1 ? 'participants' : 'participant');
+    if (f.n) {
+      const parts = [L('Acquis') + ' : ' + f.acquis];
+      if (f.consolider) parts.push(L('À consolider') + ' : ' + f.consolider);
+      if (f.non) parts.push(L('Non acquis') + ' : ' + f.non);
+      t += ' (' + parts.join(', ') + ')';
+    }
+    return t;
+  }
+  /* Phrase de la validation finale quand le rapport contient une formation. */
+  const MENTION_FORMATION = "Le client confirme que les opérateurs listés dans la partie « Formation des opérateurs » ont suivi la formation décrite.";
+
   /* ===================== Données dérivées ============================= */
   function catalogue(reglages) {
     const S = reglages || {};
@@ -484,9 +662,10 @@
 
   function etat(intervention, reglages) {
     const { domaines, categories } = catalogue(reglages);
-    const evs = (intervention.evenements || []).filter(e => e.domaine || valeur(e.texte));
+    const evs = (intervention.evenements || []).filter(evRenseigne);
     const travaux = evs.filter(estTravail);
-    const constats = evs.filter(e => !estTravail(e));
+    const constats = evs.filter(estConstat);
+    const formations = evs.filter(estFormation);
     const parCategorie = {}, parDomaine = {};
     (reglages.categories || []).forEach(c => { parCategorie[c.id] = 0; });
     (reglages.domaines || []).forEach(d => { parDomaine[d.id] = 0; });
@@ -494,13 +673,18 @@
     constats.forEach(function (e) {
       parCategorie[e.categorie || 'INFO'] = (parCategorie[e.categorie || 'INFO'] || 0) + 1;
     });
-    evs.forEach(function (e) { parDomaine[e.domaine] = (parDomaine[e.domaine] || 0) + 1; });
+    evs.forEach(function (e) { if (e.domaine) parDomaine[e.domaine] = (parDomaine[e.domaine] || 0) + 1; });
     const duree = dureeTotale(intervention);
     const nbPhotos = evs.reduce(function (a, e) { return a + (e.photos || []).length; }, 0) +
       (intervention.photosLibres || []).length;
+    // formation : participants de toutes les sessions et leurs évaluations
+    const bilans = formations.map(bilanFormation);
+    const somme = (k) => bilans.reduce((a, b) => a + b[k], 0);
     return {
       domaines: domaines, categories: categories, evenements: evs, parCategorie: parCategorie,
       travaux: travaux, constats: constats, corriges: constats.filter(e => e.corrige).length,
+      formations: formations, bilansFormation: bilans,
+      formes: { n: somme('n'), acquis: somme('acquis'), consolider: somme('consolider'), non: somme('non'), signes: somme('signes') },
       parDomaine: parDomaine, duree: duree, nbPhotos: nbPhotos,
       securite: (parCategorie.SECURITE || 0) + (parCategorie.URGENT || 0)
     };
@@ -510,12 +694,12 @@
     const cats = section.categories || [];
     const rang = (e) => (section.parPriorite ? cats.indexOf(e.categorie || 'INFO') : 0);
     return (intervention.evenements || [])
-      .filter(e => (e.domaine || valeur(e.texte)) && !estTravail(e) && cats.indexOf(e.categorie || 'INFO') >= 0)
+      .filter(e => evRenseigne(e) && estConstat(e) && cats.indexOf(e.categorie || 'INFO') >= 0)
       .sort((a, b) => (rang(a) - rang(b)) || (new Date(a.heure || 0) - new Date(b.heure || 0)));
   }
   function travauxDe(intervention) {
     return (intervention.evenements || [])
-      .filter(e => (e.domaine || valeur(e.texte)) && estTravail(e))
+      .filter(e => evRenseigne(e) && estTravail(e))
       .sort((a, b) => new Date(a.heure || 0) - new Date(b.heure || 0));
   }
 
@@ -528,7 +712,15 @@
   function canevasRapport(i, s) {
     const base = (s && s.canevas && s.canevas.sections) ? s.canevas.sections : canevasDefaut().sections;
     const type = (i && i.typeIntervention) || ((i && (i.evenements || []).some(estTravail)) ? 'mixte' : '');
-    if (!type) return base;
+    const sectionFormation = base.filter(x => x && x.type === 'formation')[0] ||
+      { id: 'formation', type: 'formation', titre: '0. Formation des opérateurs' };
+    if (!type) {
+      /* Canevas des réglages : la partie Formation est ajoutée (avant les travaux
+         à prévoir, les pièces, les photos et la validation) s'il y a une formation. */
+      if (!formationsDe(i).length || base.some(x => x && x.type === 'formation')) return base;
+      const k = base.findIndex(x => x && (x.id === 'prevoir' || ['pieces', 'photos', 'signature'].indexOf(x.type) >= 0));
+      return k < 0 ? base.concat([sectionFormation]) : base.slice(0, k).concat([sectionFormation], base.slice(k));
+    }
     const d = {};
     canevasDefaut().sections.forEach(x => { d[x.id] = x; });
     base.forEach(x => { if (x && x.id) d[x.id] = x; });   // reprend les titres personnalisés
@@ -539,15 +731,17 @@
       return [d.synthese, travaux,
         // tous les constats dans une seule partie, les plus prioritaires d'abord
         { id: 'constats', type: 'evenements', titre: '0. Points relevés', parPriorite: true,
-          categories: ['SECURITE', 'URGENT', 'HAUTE', 'BASSE', 'INFO'].concat(((s && s.categories) || []).map(c => c.id)) }]
+          categories: ['SECURITE', 'URGENT', 'HAUTE', 'BASSE', 'INFO'].concat(((s && s.categories) || []).map(c => c.id)) },
+        sectionFormation]
         .concat(fin);
     }
     if (type === 'audit') {
-      return [d.synthese, d.secu, d.haute, d.basse, d.info, travaux].concat(fin);
+      return [d.synthese, d.secu, d.haute, d.basse, d.info, travaux, sectionFormation].concat(fin);
     }
     return [d.synthese, travaux,
       avec(d.secu, '0. Constats — Sécurité et urgences'), avec(d.haute, '0. Constats — Priorité haute'),
-      avec(d.basse, '0. Constats — Priorité basse'), avec(d.info, '0. Constats — Informations complémentaires')]
+      avec(d.basse, '0. Constats — Priorité basse'), avec(d.info, '0. Constats — Informations complémentaires'),
+      sectionFormation]
       .concat(fin);
   }
 
@@ -997,9 +1191,6 @@
     /** Un évènement : bandeau coloré (catégorie + domaine + heure), texte, photos.
         Mise en page « une page par évènement » (réglage). */
     async blocEvenement(ev, index) {
-      const { domaines, categories } = this.etat;
-      const cat = categories[ev.categorie || 'INFO'] || { libelle: 'Informatif', couleur: '#475569' };
-      const dom = domaines[ev.domaine] || { libelle: '—', icone: '' };
       const p = this.pdf, C = this.C;
       const texte = valeur(ev.texte) || '(aucune annotation)';
       const lh = 13.6;
@@ -1027,6 +1218,156 @@
       }
     }
 
+    /* ---------- Formation des opérateurs ---------- */
+
+    /** Bandeau violet d'une session : [n° k/n] intitulé — [machine] · horaires · FORMATION. */
+    bandeauFormation(ev, numero, f) {
+      const p = this.pdf, C = this.C;
+      const couleur = hexRgb(COULEUR_FORMATION);
+      p.rect(this.M, p.y, this.CW, 18, { fill: hexClair(COULEUR_FORMATION, 0.9), stroke: couleur, lineWidth: 0.5 });
+      p.rect(this.M, p.y, 4, 18, { fill: couleur });
+      const lib = (numero ? numero + '  ·  ' : '') + (titreFormation(f, t => this.L(t)) || this.L('Formation')) +
+        (ev.machineNom ? ' — [' + ev.machineNom + ']' : '');
+      p.text(Pdf.trunc(lib, this.CW * 0.56, 9.6, true), this.M + 9, p.y + 12.6, { size: 9.6, font: 'F2', color: couleur });
+      const horaires = [f.debut, f.fin].filter(Boolean).join(' - ');
+      if (horaires) p.text(horaires, this.M + this.CW * 0.7, p.y + 12.6, { size: 8.8, color: C.gris, align: 'center' });
+      p.text(this.L('Formation').toUpperCase(), this.M + this.CW - 9, p.y + 12.6, { size: 9.0, font: 'F2', color: couleur, align: 'right', bold: true });
+      p.y += 24;
+    }
+
+    /** Programme : un point abordé par ligne, précédé d'une coche violette. */
+    programmeFormation(f) {
+      const p = this.pdf, C = this.C, violet = hexRgb(COULEUR_FORMATION);
+      if (!f.points.length) return;
+      const lh = 12.6;
+      const items = f.points.map(pt => Pdf.wrap(this.L(pt.libelle), this.CW - 30, 9.6));
+      this.saut(18 + Math.min(items.reduce((a, l) => a + l.length, 0), 4) * lh);
+      p.text('Programme de la formation (points abordés)', this.M + 2, p.y + 10, { size: 9.4, font: 'F2', color: C.gris });
+      p.y += 17;
+      items.forEach(lignes => {
+        const h = lignes.length * lh + 2;
+        this.saut(h);
+        const y = p.y;
+        p.line(this.M + 8, y + 5.2, this.M + 11.2, y + 8.6, { color: violet, width: 1.6 });
+        p.line(this.M + 11.2, y + 8.6, this.M + 17.5, y + 1.4, { color: violet, width: 1.6 });
+        lignes.forEach((l, k) => p.text(l, this.M + 24, y + 9.2 + k * lh, { size: 9.6, color: C.texte }));
+        p.y = y + h;
+      });
+      p.y += 8;
+    }
+
+    /** Feuille d'émargement : n°, nom, fonction, évaluation et signature de chaque participant. */
+    async emargementFormation(b) {
+      const p = this.pdf, C = this.C, violet = hexRgb(COULEUR_FORMATION);
+      const ps = b.participants;
+      if (!ps.length) {
+        this.saut(36);
+        p.text("Feuille d'émargement", this.M + 2, p.y + 10, { size: 9.4, font: 'F2', color: C.gris });
+        p.text('Aucun participant enregistré.', this.M + 8, p.y + 26, { size: 9.6, color: C.gris });
+        p.y += 38;
+        return;
+      }
+      const colN = 24, reste = this.CW - colN;
+      const colNom = Math.round(reste * 0.31), colFct = Math.round(reste * 0.25), colEval = Math.round(reste * 0.18);
+      const colSig = reste - colNom - colFct - colEval;
+      const xs = [this.M, this.M + colN, this.M + colN + colNom, this.M + colN + colNom + colFct, this.M + colN + colNom + colFct + colEval];
+      const largeurs = [colN, colNom, colFct, colEval, colSig];
+      const hEntete = 20, hLigne = 40;
+      // le titre du tableau reste avec l'en-tête et les deux premières lignes
+      this.saut(16 + hEntete + hLigne * Math.min(ps.length, 2) + 6);
+      p.text("Feuille d'émargement", this.M + 2, p.y + 10, { size: 9.4, font: 'F2', color: C.gris });
+      p.y += 16;
+      let y = p.y;
+      const entete = () => {
+        p.rect(this.M, y, this.CW, hEntete, { fill: hexClair(COULEUR_FORMATION, 0.9), stroke: C.bordFort, lineWidth: 0.6 });
+        [['N°', true], ['Nom et prénom'], ['Fonction / poste'], ['Évaluation', true], ['Signature', true]].forEach((c, k) => {
+          const x = c[1] ? xs[k] + largeurs[k] / 2 : xs[k] + 6;
+          p.text(c[0], x, y + 13.5, { size: 9.2, font: 'F2', color: violet, align: c[1] ? 'center' : 'left', bold: true });
+          if (k) p.line(xs[k], y, xs[k], y + hEntete, { color: C.bordFort, width: 0.6 });
+        });
+        y += hEntete;
+      };
+      entete();
+      for (let k = 0; k < ps.length; k++) {
+        const pa = ps[k];
+        if (y + hLigne > this.limiteBas()) { p.newPage(); this.enteteSuite(); y = p.y + 4; entete(); }
+        p.rect(this.M, y, this.CW, hLigne, { fill: [1, 1, 1], stroke: C.bord, lineWidth: 0.4 });
+        const yc = y + hLigne / 2 + 3.4;
+        p.text(String(k + 1), xs[0] + colN / 2, yc, { size: 9.2, color: C.gris, align: 'center' });
+        const deuxLignes = (txt, x, w, opt) => {
+          const lignes = Pdf.wrap(txt, w, opt.size, opt.bold).slice(0, 2);
+          lignes.forEach((l, j) => p.text(Pdf.trunc(l, w, opt.size, opt.bold), x, yc - (lignes.length - 1) * 5.6 + j * 11.2, opt));
+        };
+        deuxLignes(valeur(pa.nom).trim(), xs[1] + 6, colNom - 12, { size: 9.6, font: 'F2', bold: true, color: C.texte });
+        deuxLignes(valeur(pa.fonction) ? this.L(valeur(pa.fonction).trim()) : '—', xs[2] + 6, colFct - 12, { size: 9.0, color: C.texte });
+        const ev = EVALUATIONS[pa.evaluation];
+        p.text(ev ? ev.libelle : 'Non évalué', xs[3] + colEval / 2, yc,
+          { size: 9.2, font: ev ? 'F2' : 'F1', bold: !!ev, color: ev ? hexRgb(ev.couleur) : C.gris, align: 'center' });
+        const sig = valeur(pa.signature) ? await toJpeg(pa.signature, 500, 0.85) : null;
+        if (sig) {
+          const maxW = colSig - 10, maxH = hLigne - 6;
+          let w = maxW, h = w * (sig.h / sig.w);
+          if (h > maxH) { h = maxH; w = h * (sig.w / sig.h); }
+          p.image(Pdf.dataUrlToBytes(sig.dataUrl), xs[4] + (colSig - w) / 2, y + (hLigne - h) / 2, w, h);
+        } else {
+          p.text(pa.signeA ? 'Signé' : 'Non signé', xs[4] + colSig / 2, yc, { size: 8.8, color: C.gris, align: 'center' });
+        }
+        for (let c = 1; c < 5; c++) p.line(xs[c], y, xs[c], y + hLigne, { color: C.bord, width: 0.4 });
+        y += hLigne;
+      }
+      p.y = y + 6;
+    }
+
+    /** Une session de formation complète. */
+    async blocFormation(ev, numero, titreSection) {
+      const p = this.pdf, i = this.i, s = this.s;
+      const b = bilanFormation(ev), f = b.f;
+      // une session commence sur une page où tiennent son bandeau, sa fiche et le début du programme
+      if (p.y + 170 > this.limiteBas()) { p.newPage(); this.enteteSuite(); this.titre(titreSection, this.L('suite')); }
+      this.bandeauFormation(ev, numero, f);
+      const horaires = [f.debut, f.fin].filter(Boolean).join(' - ');
+      const duree = texteMinutes(b.duree);
+      const docs = f.documents.map(x => this.L(DOCUMENTS_FORMATION[x])).concat(f.autresDocuments ? [f.autresDocuments] : []);
+      const sujets = titreFormation(f, t => this.L(t));
+      this.kv([
+        ['Formateur', f.formateur || nomTechnicien(i, s) || '—'],
+        ['Date et horaires', [frDate(f.date), horaires].filter(Boolean).join(', ') + (duree ? ' (' + duree + ')' : '') || '—'],
+        // plusieurs sujets : la liste complète, sur toute la largeur (le bandeau peut la couper)
+        [(f.sujets.length + (f.intitule ? 1 : 0)) > 1 ? 'Sujets' : '', sujets, true],
+        ["Méthode d'évaluation", f.methodes.map(m => this.L(METHODES_FORMATION[m])).join(', ') || '—', true],
+        ['Documents remis', docs.join(', ') || '—', true]
+      ]);
+      this.programmeFormation(f);
+      if (valeur(ev.texte)) this.blocTexte('Contenu et observations', ev.texte);
+      await this.emargementFormation(b);
+      if (b.n) {
+        // bilan de la session
+        const morceaux = [b.n + ' ' + this.L(b.n > 1 ? 'participants' : 'participant'),
+          this.L('Acquis') + ' : ' + b.acquis];
+        if (b.consolider) morceaux.push(this.L('À consolider') + ' : ' + b.consolider);
+        if (b.non) morceaux.push(this.L('Non acquis') + ' : ' + b.non);
+        morceaux.push(this.L('Émargement') + ' : ' + b.signes + '/' + b.n);
+        this.saut(20);
+        p.text(Pdf.trunc(this.L('Bilan') + ' : ' + morceaux.join('  ·  '), this.CW - 8, 9.6, true), this.M + 4, p.y + 10,
+          { size: 9.6, font: 'F2', color: hexRgb(b.signes === b.n && b.evalues === b.n ? COULEUR_FORMATION : '#c2410c') });
+        p.y += 18;
+      }
+      // attestation de la session
+      let attestation = 'Chaque participant atteste, par sa signature, avoir suivi la formation décrite ci-dessus. Le formateur atteste l\'évaluation indiquée pour chaque participant.';
+      if (b.consolider || b.non) attestation += ' Un complément de formation est recommandé pour les participants « À consolider » ou « Non acquis ».';
+      const texteAtt = traduirePhrases(attestation, this.langue);
+      const hA = Pdf.wrap(texteAtt, this.CW - 16, 8.6).length * 11.4 + 8;
+      this.saut(hA + 4);
+      p.rect(this.M, p.y, this.CW, hA, { fill: hexClair(COULEUR_FORMATION, 0.94), stroke: hexClair(COULEUR_FORMATION, 0.6), lineWidth: 0.5 });
+      p.paragraph(texteAtt, this.M + 8, p.y + 2, this.CW - 16, { size: 8.6, lineHeight: 11.4, color: [0.3, 0.16, 0.55] });
+      p.y += hA + 10;
+      const phs = (ev.photos || []).filter(ph => ph && ph.dataUrl);
+      if (phs.length) await this.photos(phs.map(ph => ({ dataUrl: ph.dataUrl, legende: ph.legende || '' })), true, false);
+      p.y += 10;
+    }
+
+    texteFormes() { return texteFormes(this.etat, t => this.L(t)); }
+
     async blocSynthese() {
       const p = this.pdf, C = this.C, i = this.i, e = this.etat;
       // bandeau de compteurs par catégorie
@@ -1035,6 +1376,7 @@
       if (e.travaux.length) cases.push({ n: e.travaux.length, libelle: 'Travaux réalisés', couleur: COULEUR_TRAVAIL });
       (this.s.categories || []).filter(c => e.parCategorie[c.id])
         .forEach(c => cases.push({ n: e.parCategorie[c.id], libelle: c.libelle, couleur: c.couleur }));
+      if (e.formes.n) cases.push({ n: e.formes.n, libelle: 'Opérateurs formés', couleur: COULEUR_FORMATION });
       if (cases.length) {
         const nb = cases.length;
         const caseW = (this.CW - (nb - 1) * 5) / nb;
@@ -1058,6 +1400,7 @@
       lignes.push(['Photos jointes', String(e.nbPhotos)]);
       lignes.push(['Points de sécurité / urgence', String(e.securite)]);
       if (e.corriges) lignes.push(['Constats corrigés sur place', String(e.corriges)]);
+      if (e.formations.length) lignes.push(['Formation des opérateurs', this.texteFormes()]);
       if (travauxTermines(i)) lignes.push(['Travaux terminés', travauxTermines(i)]);
       this.kv(lignes.map(function (l) { return [l[0], l[1], true]; }));
 
@@ -1080,7 +1423,8 @@
       const hLigne = avecPhotos ? TAILLE_PHOTO + 8 : 22;
       const hEntete = 20;
 
-      this.saut(hEntete + hLigne * Math.min(pcs.length, 3) + 24);
+      // en-tête + 2 lignes au moins sur la page (même réserve que pour le titre de la section)
+      this.saut(hEntete + hLigne * Math.min(pcs.length, 2) + 10);
       let y = p.y;
 
       const tracerEntete = () => {
@@ -1283,11 +1627,10 @@
       p.y = y;
     }
 
-    async blocSignatures(titre) {
-      const p = this.pdf, C = this.C, i = this.i, s = this.s;
-      const sigClient = await toJpeg((i.signatureClient || {}).dataUrl, 900, 0.9);
-      const sigTech = await toJpeg(s.technicien && s.technicien.signature, 900, 0.9);
-      const pcs = (i.pieces || []).filter(p => (p.denomination || p.designation || p.reference || p.quantite));
+    /* Mention de validation (mention client + pièces + trajet + formation), traduite. */
+    mentionValidation() {
+      const i = this.i, s = this.s;
+      const pcs = piecesRapport(i);
       let mention = valeur((s.impression && s.impression.mentionClient)) ||
         "Le client reconnaît avoir pris connaissance du présent rapport, avoir reçu les explications du technicien et accepte les constats et travaux décrits.";
       if (pcs.length > 0) {
@@ -1297,7 +1640,22 @@
       if (tr && tr.actif) {
         mention += " La durée du trajet retour est estimée sur la base du trajet aller constaté.";
       }
-      const mentionTraduite = this.L(mention);
+      if (this.etat.formations.length) mention += ' ' + MENTION_FORMATION;
+      return traduirePhrases(mention, this.langue);
+    }
+    /* Hauteur du bloc de validation : le titre « Validation » la réserve, pour ne
+       jamais rester seul en bas de page. */
+    hauteurValidation() {
+      const hT = Pdf.wrap(this.mentionValidation(), this.CW - 16, 8.8).length * 11.8 + 10;
+      const hEtat = (travauxTermines(this.i) || valeur(this.i.faitLe)) ? 22 : 0;
+      return hEtat + hT + 124 + 26;
+    }
+
+    async blocSignatures(titre) {
+      const p = this.pdf, C = this.C, i = this.i, s = this.s;
+      const sigClient = await toJpeg((i.signatureClient || {}).dataUrl, 900, 0.9);
+      const sigTech = await toJpeg(s.technicien && s.technicien.signature, 900, 0.9);
+      const mentionTraduite = this.mentionValidation();
       const hT = Pdf.wrap(mentionTraduite, this.CW - 16, 8.8).length * 11.8 + 10;
       const hBloc = 124;
       // comme sur la fiche papier : « Travaux terminés : Oui — Fait le … » avant les signatures
@@ -1515,6 +1873,17 @@
             await this.blocEvenement(ev, idx);
           }
           dernierTypeEtaitEvenement = true;
+        } else if (section.type === 'formation') {
+          const fs = formationsDe(i);
+          if (!fs.length) continue;
+          if (dernierTypeEtaitEvenement) { this.pdf.newPage(); this.enteteSuite(); }
+          const titreSection = num(section, 'Formation des opérateurs');
+          const nb = this.etat.formes.n;
+          this.titre(titreSection, nb ? nb + ' ' + this.L(nb > 1 ? 'participants' : 'participant') : null, 150);
+          for (let k = 0; k < fs.length; k++) {
+            await this.blocFormation(fs[k], fs.length > 1 ? (k + 1) + '/' + fs.length : '', titreSection);
+          }
+          dernierTypeEtaitEvenement = false;
         } else if (section.type === 'texte') {
           const contenu = valeur(i[section.champ]);
           if (!contenu) continue;
@@ -1522,18 +1891,19 @@
             this.pdf.newPage();
             this.enteteSuite();
           }
-          this.titre(num(section, 'Texte'));
+          this.titre(num(section, 'Texte'), null, 40);   // au moins deux lignes de texte sous le titre
           this.blocTexte(null, contenu);
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'pieces') {
           piecesRendues = true;
-          const pcs = (i.pieces || []).filter(p => (p.denomination || p.designation || p.reference || p.quantite));
+          const pcs = piecesRapport(i);
           if (!pcs.length) continue;
           if (dernierTypeEtaitEvenement) {
             this.pdf.newPage();
             this.enteteSuite();
           }
-          this.titre(num(section, 'Pièces de rechange'), pcs.length + ' pièce(s)', 120);
+          // le titre ne reste jamais seul en bas de page : il réserve l'en-tête et 2 lignes du tableau
+          this.titre(num(section, 'Pièces de rechange'), pcs.length + ' pièce(s)', reservePieces(pcs));
           await this.blocPieces(pcs);
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'photos') {
@@ -1548,13 +1918,13 @@
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'signature') {
           if (!piecesRendues) {
-            const pcs = (i.pieces || []).filter(p => (p.denomination || p.designation || p.reference || p.quantite));
+            const pcs = piecesRapport(i);
             if (pcs.length) {
               if (dernierTypeEtaitEvenement) {
                 this.pdf.newPage();
                 this.enteteSuite();
               }
-              this.titre(num({ titre: '0. ' + this.L('Pièces de rechange') }), pcs.length + ' pièce(s)', 120);
+              this.titre(num({ titre: '0. ' + this.L('Pièces de rechange') }), pcs.length + ' pièce(s)', reservePieces(pcs));
               await this.blocPieces(pcs);
               piecesRendues = true;
               dernierTypeEtaitEvenement = false;
@@ -1564,7 +1934,7 @@
             this.pdf.newPage();
             this.enteteSuite();
           }
-          this.titre(num(section, 'Validation'), null, 170);
+          this.titre(num(section, 'Validation'), null, this.hauteurValidation());
           await this.blocSignatures();
           dernierTypeEtaitEvenement = false;
         }
@@ -1650,6 +2020,84 @@
     mentionWord(ev) {
       const m = mentionEvenement(ev);
       return m ? { t: this.L(m.texte), gras: true, taille: 10, couleur: hexDocx(m.couleur) } : null;
+    }
+
+    texteFormes() { return texteFormes(this.etat, t => this.L(t)); }
+
+    /* Une session de formation : fiche, programme, observations, feuille
+       d'émargement (signatures), bilan, attestation et photos. */
+    formationWord(ev, numero) {
+      const d = this.doc, i = this.i, s = this.s;
+      const b = bilanFormation(ev), f = b.f;
+      const violet = hexDocx(COULEUR_FORMATION);
+      const morc = [];
+      if (numero) morc.push({ t: numero + '   ', font: 'Poppins', gras: true, taille: 10.5, couleur: '94A3B8' });
+      morc.push({ t: titreFormation(f, t => this.L(t)) || this.L('Formation'), font: 'Poppins', gras: true, taille: 11.5, couleur: '332E72' });
+      if (ev.machineNom) morc.push({ t: '   [' + ev.machineNom + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: '06BAF2' });
+      morc.push({ t: '   [' + this.L('Formation').toUpperCase() + ']', font: 'Poppins', gras: true, taille: 10.5, couleur: violet });
+      d.para(morc, { avant: 200, apres: 60, avecSuivant: true });
+
+      const horaires = [f.debut, f.fin].filter(Boolean).join(' - ');
+      const duree = texteMinutes(b.duree);
+      const docs = f.documents.map(x => this.L(DOCUMENTS_FORMATION[x])).concat(f.autresDocuments ? [f.autresDocuments] : []);
+      const etiq = (t) => ({ texte: this.L(t), gras: true, fond: 'F5F3FF' });
+      d.tableau([
+        [etiq('Formateur'), { texte: f.formateur || nomTechnicien(i, s) || '—' },
+         etiq('Date et horaires'), { texte: [frDate(f.date), horaires].filter(Boolean).join(', ') + (duree ? ' (' + duree + ')' : '') || '—' }],
+        [etiq("Méthode d'évaluation"), { texte: f.methodes.map(m => this.L(METHODES_FORMATION[m])).join(', ') || '—' },
+         etiq('Documents remis'), { texte: docs.join(', ') || '—' }]
+      ], { largeurs: [18, 32, 18, 32] });
+
+      if (f.points.length) {
+        d.para(this.L('Programme de la formation (points abordés)'), { font: 'Poppins', gras: true, taille: 10.5, couleur: '58595B', avant: 60, apres: 40, avecSuivant: true });
+        f.points.forEach((pt, k) => d.para([{ t: '✓  ', gras: true, couleur: violet }, { t: this.L(pt.libelle) }],
+          { taille: 10.5, apres: 20, avecSuivant: k < f.points.length - 1 }));
+      }
+      if (valeur(ev.texte)) {
+        d.para(this.L('Contenu et observations'), { font: 'Poppins', gras: true, taille: 10.5, couleur: '58595B', avant: 80, apres: 40, avecSuivant: true });
+        d.para(ev.texte, { taille: 10.5, apres: 80, encadre: true });
+      }
+
+      d.para(this.L("Feuille d'émargement"), { font: 'Poppins', gras: true, taille: 10.5, couleur: '58595B', avant: 80, apres: 40, avecSuivant: true });
+      if (!b.n) {
+        d.para(this.L('Aucun participant enregistré.'), { taille: 10, couleur: '64748B', apres: 80 });
+      } else {
+        const ent = (t, align) => ({ texte: this.L(t), gras: true, couleur: violet, fond: 'EDE9FE', align: align });
+        const lignes = [[ent('N°', 'center'), ent('Nom et prénom'), ent('Fonction / poste'), ent('Évaluation', 'center'), ent('Signature', 'center')]];
+        b.participants.forEach((pa, k) => {
+          const evl = EVALUATIONS[pa.evaluation];
+          const sig = valeur(pa.signature);
+          lignes.push([
+            { texte: String(k + 1), align: 'center', couleur: '64748B' },
+            { texte: valeur(pa.nom).trim(), gras: true },
+            { texte: valeur(pa.fonction) ? this.L(valeur(pa.fonction).trim()) : '—' },
+            { texte: evl ? this.L(evl.libelle) : this.L('Non évalué'), gras: !!evl, align: 'center', couleur: evl ? hexDocx(evl.couleur) : '64748B' },
+            sig ? { image: sig, imageCm: Math.min(3.4, 1.3 / ratioPhoto(sig)), align: 'center' }
+              : { texte: this.L(pa.signeA ? 'Signé' : 'Non signé'), align: 'center', couleur: '64748B' }
+          ]);
+        });
+        d.tableau(lignes, { largeurs: [7, 30, 25, 16, 22] });
+        const morceaux = [b.n + ' ' + this.L(b.n > 1 ? 'participants' : 'participant'), this.L('Acquis') + ' : ' + b.acquis];
+        if (b.consolider) morceaux.push(this.L('À consolider') + ' : ' + b.consolider);
+        if (b.non) morceaux.push(this.L('Non acquis') + ' : ' + b.non);
+        morceaux.push(this.L('Émargement') + ' : ' + b.signes + '/' + b.n);
+        d.para([{ t: this.L('Bilan') + ' : ', gras: true, couleur: violet }, { t: morceaux.join('  ·  '), gras: true }], { taille: 10.5, apres: 60 });
+      }
+      let attestation = 'Chaque participant atteste, par sa signature, avoir suivi la formation décrite ci-dessus. Le formateur atteste l\'évaluation indiquée pour chaque participant.';
+      if (b.consolider || b.non) attestation += ' Un complément de formation est recommandé pour les participants « À consolider » ou « Non acquis ».';
+      d.para(traduirePhrases(attestation, this.langue), { taille: 9.5, couleur: '5B21B6', apres: 120, encadre: true });
+
+      const phs = (ev.photos || []).filter(x => x && x.dataUrl);
+      if (phs.length) {
+        const legende = (ph) => this.L('Photo') + ' ' + (++this.numeroPhoto) + (ph.legende ? ' — ' + ph.legende : '');
+        const lignesTab = [];
+        for (let j = 0; j < phs.length; j += 2) {
+          const lot = phs.slice(j, j + 2);
+          lignesTab.push(lot.map(ph => ({ image: ph.dataUrl, imageCm: Math.min(7, 5 / ratioPhoto(ph.dataUrl)), legende: legende(ph) }))
+            .concat(lot.length === 1 ? [{ texte: '' }] : []));
+        }
+        d.tableau(lignesTab, { largeurs: [50, 50], sansBordures: true });
+      }
     }
 
     async generer() {
@@ -1839,11 +2287,17 @@
             ? [[{ texte: this.L('Travaux réalisés'), gras: true, couleur: hexDocx(COULEUR_TRAVAIL) },
                 { texte: String(this.etat.travaux.length), align: 'center', gras: true, couleur: hexDocx(COULEUR_TRAVAIL) }]]
             : []).concat((this.s.categories || []).filter(c => this.etat.parCategorie[c.id])
-            .map(c => [{ texte: this.L(c.libelle) }, { texte: String(this.etat.parCategorie[c.id]), align: 'center', gras: true }]));
+            .map(c => [{ texte: this.L(c.libelle) }, { texte: String(this.etat.parCategorie[c.id]), align: 'center', gras: true }]))
+            .concat(this.etat.formes.n
+              ? [[{ texte: this.L('Opérateurs formés'), gras: true, couleur: hexDocx(COULEUR_FORMATION) },
+                  { texte: String(this.etat.formes.n), align: 'center', gras: true, couleur: hexDocx(COULEUR_FORMATION) }]]
+              : []);
           if (lignes.length) d.tableau([[{ texte: 'Catégorie', gras: true }, { texte: 'Nombre', gras: true, align: 'center' }]].concat(lignes),
             { largeurs: [70, 30], enteteFond: 'E8EFFA' });
           if (this.etat.corriges) d.para(this.L('Constats corrigés sur place') + ' : ' + this.etat.corriges,
             { taille: 10.5, gras: true, couleur: hexDocx(COULEUR_TRAVAIL), apres: 60 });
+          if (this.etat.formations.length) d.para([{ t: this.L('Formation des opérateurs') + ' : ', gras: true, couleur: hexDocx(COULEUR_FORMATION) },
+            { t: this.texteFormes() }], { taille: 10.5, apres: 60 });
           if (travauxTermines(i)) d.para([{ t: this.L('Travaux terminés') + ' : ', gras: true },
             { t: this.L(travauxTermines(i)), gras: true, couleur: hexDocx(COULEURS_TERMINES[travauxTermines(i)]) }],
             { taille: 10.5, apres: 60 });
@@ -1853,10 +2307,14 @@
           d.para('Heures passées sur site : ' + (formatDuree(this.etat.duree) || '—') +
             (this.etat.duree ? ' (' + dureeDecimale(this.etat.duree) + ' h)' : '') + '   •   Photos : ' + this.etat.nbPhotos,
             { taille: 10.5, apres: 120 });
-          if (valeur(i.resumeTechnicien)) d.para('Synthèse du technicien', { font: 'Poppins', gras: true, taille: 11.5, apres: 40 }),
+          if (valeur(i.resumeTechnicien)) {
+            d.para('Synthèse du technicien', { font: 'Poppins', gras: true, taille: 11.5, apres: 40 });
             d.para(i.resumeTechnicien, { taille: 10.5, apres: 120 });
-          if (valeur(i.objet)) d.para('Objet / demande du client', { font: 'Poppins', gras: true, taille: 11.5, apres: 40 }),
+          }
+          if (valeur(i.objet)) {
+            d.para('Objet / demande du client', { font: 'Poppins', gras: true, taille: 11.5, apres: 40 });
             d.para(i.objet, { taille: 10.5, apres: 120 });
+          }
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'evenements' || section.type === 'travaux') {
           const sectionTravaux = section.type === 'travaux';
@@ -1945,6 +2403,17 @@
             }
           }
           dernierTypeEtaitEvenement = true;
+        } else if (section.type === 'formation') {
+          const fs = formationsDe(i);
+          if (!fs.length) continue;
+          if (dernierTypeEtaitEvenement) d.sautDePage();
+          const nb = this.etat.formes.n;
+          d.bandeau(this.L(num(section, 'Formation des opérateurs')) +
+            (nb ? ' — ' + nb + ' ' + this.L(nb > 1 ? 'participants' : 'participant') : ''));
+          for (let k = 0; k < fs.length; k++) {
+            this.formationWord(fs[k], fs.length > 1 ? (k + 1) + '/' + fs.length : '');
+          }
+          dernierTypeEtaitEvenement = false;
         } else if (section.type === 'texte') {
           const contenu = valeur(i[section.champ]);
           if (!contenu) continue;
@@ -1954,7 +2423,7 @@
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'pieces') {
           piecesRendues = true;
-          const pcs = (i.pieces || []).filter(p => (p.denomination || p.designation || p.reference || p.quantite));
+          const pcs = piecesRapport(i);
           if (!pcs.length) continue;
           if (dernierTypeEtaitEvenement) d.sautDePage();
           d.bandeau(num(section, 'Pièces de rechange'));
@@ -2001,7 +2470,7 @@
           dernierTypeEtaitEvenement = false;
         } else if (section.type === 'signature') {
           if (!piecesRendues) {
-            const pcs = (i.pieces || []).filter(p => (p.denomination || p.designation || p.reference || p.quantite));
+            const pcs = piecesRapport(i);
             if (pcs.length) {
               if (dernierTypeEtaitEvenement) d.sautDePage();
               d.bandeau(num({ titre: '0. ' + this.L('Pièces de rechange') }));
@@ -2046,13 +2515,14 @@
           d.bandeau(num(section, 'Validation'));
           let mention = valeur(this.s.impression && this.s.impression.mentionClient) ||
             "Le client reconnaît avoir pris connaissance du présent rapport, avoir reçu les explications du technicien et accepte les constats et travaux décrits.";
-          const pcs = (i.pieces || []).filter(p => (p.denomination || p.designation || p.reference || p.quantite));
+          const pcs = piecesRapport(i);
           if (pcs.length > 0) {
             mention += " La signature du client vaut pour acceptation du devis final et validation des pièces de rechange ci-dessus.";
           }
           if (tr && tr.actif) {
             mention += " La durée du trajet retour est estimée sur la base du trajet aller constaté.";
           }
+          if (this.etat.formations.length) mention += ' ' + MENTION_FORMATION;
           const ttW = travauxTermines(i), faitLeW = valeur(i.faitLe);
           if (ttW || faitLeW) {
             d.tableau([[
@@ -2061,7 +2531,7 @@
               { texte: faitLeW ? this.L('Fait le') + ' ' + frDate(faitLeW) : '', align: 'right' }
             ]], { largeurs: [60, 40], sansBordures: true });
           }
-          d.para(this.L(mention), { taille: 9.8, apres: 160, encadre: true });
+          d.para(traduirePhrases(mention, this.langue), { taille: 9.8, apres: 160, encadre: true });
           const cli = i.signatureClient || {};
           const ligAccompagne = (colleguesP1Word.length > 0)
             ? [[{ texte: '' }, { texte: this.L('Accompagné de') + ' : ' + colleguesP1Word.map(c => c.nom + (c.fonction ? ' (' + this.L(c.fonction) + ')' : '')).join(', ') }]]
@@ -2133,6 +2603,8 @@
       nbTravaux: String(e.travaux.length), nbConstats: String(e.constats.length),
       travauxTermines: travauxTermines(i), faitLe: frDate(i.faitLe),
       nbCorriges: String(e.corriges),
+      nbFormations: String(e.formations.length), nbFormes: String(e.formes.n),
+      formation: e.formations.length ? texteFormes(e, t => t) : '',
       typeIntervention: (TYPES_INTERVENTION[i.typeIntervention] || {}).libelle || '',
       titreRapport: titreRapport(i),
       nbSecurite: String(e.parCategorie.SECURITE || 0),
@@ -2422,11 +2894,18 @@
     objetMailClient: objetMailClient, corpsMailClient: corpsMailClient,
     objetMailSAV: objetMailSAV, corpsMailSAV: corpsMailSAV,
     corpsMailBilingue: corpsMailBilingue, texteSMSArrivee: texteSMSArrivee,
-    infoMachinePiece: infoMachinePiece,
+    infoMachinePiece: infoMachinePiece, piecesRapport: piecesRapport,
     estTravail: estTravail, travauxDe: travauxDe, travauxTermines: travauxTermines,
     jourDepuisChrono: jourDepuisChrono, pourRapport: pourRapport, dateLocale: dateLocale, titreRapport: titreRapport, canevasRapport: canevasRapport,
     mentionEvenement: mentionEvenement, RESULTATS: RESULTATS, TYPES_INTERVENTION: TYPES_INTERVENTION,
     COULEUR_TRAVAIL: COULEUR_TRAVAIL,
+    estFormation: estFormation, estConstat: estConstat, evRenseigne: evRenseigne, formationsDe: formationsDe,
+    nouvelleFormation: nouvelleFormation, formationDe: formationDe, sujetsDe: sujetsDe, titreFormation: titreFormation, bilanFormation: bilanFormation,
+    dureeFormation: dureeFormation, texteMinutes: texteMinutes, participantSigne: participantSigne,
+    COULEUR_FORMATION: COULEUR_FORMATION, FOND_FORMATION: FOND_FORMATION, INTITULES_FORMATION: INTITULES_FORMATION,
+    POINTS_FORMATION: POINTS_FORMATION, METHODES_FORMATION: METHODES_FORMATION, DOCUMENTS_FORMATION: DOCUMENTS_FORMATION,
+    EVALUATIONS: EVALUATIONS, FONCTIONS_OPERATEUR: FONCTIONS_OPERATEUR, MENTION_FORMATION: MENTION_FORMATION,
+    traduirePhrases: traduirePhrases,
     nomComplet: nomComplet, contactTech: contactTech, nomTechnicien: nomTechnicien
   };
 })(window);

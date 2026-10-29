@@ -87,7 +87,8 @@ Déroulé de l'intervention, calqué sur la fiche papier :
 |---|---|
 | **Client & machine(s)** | Client par **autocomplétion** (3 lettres), contact sur site, fonction, téléphone du client, e-mail, adresse, lieu d'intervention, logo du client (facultatif), machine principale (désignation, modèle, n° de série) et bouton **➕ Ajouter une autre machine** pour les interventions multi-machines, collègues accompagnants sur site (**➕ Ajouter un collègue**), **type d'intervention** (SAV / dépannage, Audit, SAV + audit : titre du rapport et ordre des parties), objet de la demande, N° de rapport `AAMMJJ-NN` généré automatiquement |
 | **Chrono & Multi-jours** | Bouton **Démarrer l'intervention** : l'heure de début est horodatée. Pauses et fin d'intervention ; la durée sur site est calculée pauses déduites. **Plusieurs jours** : une pause le soir reprise le lendemain, ou **Reprendre** après « Terminer » un autre jour, ouvre automatiquement une nouvelle journée (la précédente rejoint le relevé des journées) ; un chrono oublié la veille est signalé et corrigé en deux heures (fin d'hier, reprise aujourd'hui). Bouton **✏️ Ajuster / Relevé jours** pour corriger les journées à la main |
-| **Ajouter un évènement** | Assistant en 4 étapes : **1. nature** — 🔧 *Travail réalisé* (ce qu'on a fait) ou 🔍 *Constat* (ce qu'on a observé) — et **domaine** (mécanique / électrique / automatisme) et **machine concernée** (sélecteur dédié en intervention multi-machines) → **2. annotation** écrite ou dictée (la dictée continue pendant les pauses et ne s'arrête qu'avec le bouton « Arrêter la dictée »), avec relecture vocale → **3. photo** prise au téléphone puis **annotée au doigt** (flèche, cercle, crayon, texte, 5 couleurs) → **4. résultat** d'un travail (Terminé pour un travail prévu ; Résolu, Partiellement résolu, À surveiller pour un dépannage) ou **catégorie** d'un constat (🛑 Sécurité, ⚠️ Urgent, 🔺 Priorité haute, 🔽 Priorité basse, ℹ️ Informatif) avec la case **« Corrigé sur place »**. L'écran principal range les évènements en deux listes, *Travaux réalisés* et *Constats* ; le bouton **En travail / En constat** d'une carte la change de liste. L'évènement est **modifiable à tout moment** : on appuie dessus pour rouvrir l'assistant |
+| **Ajouter un évènement** | Assistant en 4 étapes : **1. nature** — 🔧 *Travail réalisé* (ce qu'on a fait) ou 🔍 *Constat* (ce qu'on a observé) — et **domaine** (mécanique / électrique / automatisme) et **machine concernée** (sélecteur dédié en intervention multi-machines) → **2. annotation** écrite ou dictée (la dictée continue pendant les pauses et ne s'arrête qu'avec le bouton « Arrêter la dictée »), avec relecture vocale → **3. photo** prise au téléphone puis **annotée au doigt** (flèche, cercle, crayon, texte, 5 couleurs) → **4. résultat** d'un travail (Terminé pour un travail prévu ; Résolu, Partiellement résolu, À surveiller pour un dépannage) ou **catégorie** d'un constat (🛑 Sécurité, ⚠️ Urgent, 🔺 Priorité haute, 🔽 Priorité basse, ℹ️ Informatif) avec la case **« Corrigé sur place »**. L'écran principal range les évènements en trois listes, *Travaux réalisés*, *Constats* et *Formations* ; le bouton **En travail / En constat** d'une carte la change de liste. L'évènement est **modifiable à tout moment** : on appuie dessus pour rouvrir l'assistant |
+| **Formation des opérateurs** | 🎓 Troisième nature d'évènement (ou bouton **Nouvelle formation** de l'onglet *Formations*), en 4 étapes : **1. sujets** (un ou plusieurs, plus un sujet libre) et machine → **2. programme** (date, début, fin, formateur, points abordés cochés ou ajoutés, méthode d'évaluation, documents remis, observations dictées) → **3. participants et émargement** : nom, fonction, **Acquis / À consolider / Non acquis** et **signature au doigt** de chacun (« Faire signer à la suite », reprise des participants d'une autre session) → **4. bilan** de ce qui manque pour valider la formation, et photos. Le rapport imprime la fiche de session, le programme, la **feuille d'émargement** avec les signatures, le bilan et l'attestation ; la validation du client confirme que les opérateurs listés ont été formés |
 | **Compte rendu** | Résumé / synthèse, travaux réalisés (résumé imprimé en tête de la partie Travaux réalisés), travaux à prévoir (base du devis), note interne |
 | **Pièces de rechange** | Bouton **➕ Ajouter pièce de rechange** : référence, quantité, dénomination des pièces neuves échangées ou laissées dans le stock client. Tableau dédié sur le rapport ; la signature du client vaut pour acceptation du devis final |
 | **Langue du client** | Case à cocher **« Traduire le rapport dans la langue du client »** (anglais, allemand, néerlandais, espagnol, italien, portugais). Décochée = **un seul rapport, en français**. Cochée = **deux rapports** : le français (version de référence) **et** la version dans la langue du client |
@@ -155,6 +156,24 @@ JSON (à faire régulièrement) et adapter les réglages.
 
 ---
 
+### Fiches préparées par le responsable SAV
+
+Dans **Réglages → Rôle sur cet appareil**, choisir *Responsable SAV* : l'écran devient
+« Fiche d'intervention à préparer » (client, machine, date prévue, type, objet, **pièces à
+emporter**, technicien destinataire, **consignes**). **Envoyer par e-mail** ouvre la
+messagerie avec un message tout prêt et un lien. Le technicien touche le lien : son
+application crée l'intervention pré-remplie. Il indique ensuite pour chaque pièce préparée
+**Laissée sur site** ou **Rapportée** ; seules les pièces laissées sont dans le rapport.
+
+- La fiche est **dans le lien** (après `#fiche=`, compressée) : aucun serveur, aucune base
+  en ligne ; elle ne voyage que dans l'e-mail.
+- L'adresse mise dans le lien est celle de la page ; dans un aperçu (artefact), la renseigner
+  dans *Réglages → Rôle* (ou par le fichier « réglages d'équipe », clé `lienApp`).
+- iPhone avec l'application sur l'écran d'accueil : le lien s'ouvre dans Safari ; *Copier la
+  fiche*, puis dans l'application *Menu → Recevoir une fiche*.
+- Les fiches du responsable SAV (`sav3.fiche`, `sav3.fiches`) sont rangées à part des
+  rapports du technicien : on peut changer de rôle sans rien perdre.
+
 ## 3. Code source et mises à jour
 
 Ce dépôt est une **image publiable** produite depuis le dépôt de travail interne par
@@ -208,13 +227,16 @@ sans liste clients.
 `tests/test_appli.py` ouvre l'application construite dans un vrai navigateur (format
 téléphone) et rejoue les gestes du terrain : identité et numéros de rapport, photos des
 rapports de l'historique, rapport PDF et Word (numérotation, mise en page selon les photos,
-images du Word), recherche et ménage de l'historique, réglages d'équipe.
+images du Word), recherche et ménage de l'historique, réglages d'équipe, SAV et audit,
+dictée, import et annuaire des clients, chrono sur plusieurs jours, formation des opérateurs
+(émargement, PDF, Word, version anglaise), fiche préparée par le responsable SAV et ouverte
+par le technicien (deux téléphones, pièces laissées ou rapportées).
 
 ```bash
 pip install playwright pypdf
 python -m playwright install --with-deps chromium
 python build.py --sans-liste
-python tests/test_appli.py      # « 5 test(s), 0 échec(s) » attendu
+python tests/test_appli.py      # « 12 test(s), 0 échec(s) » attendu
 ```
 
 La GitHub Action (`.github/workflows/pages.yml`) lance ces tests à chaque envoi sur `main`

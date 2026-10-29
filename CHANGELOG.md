@@ -1,3 +1,93 @@
+# Fiches d'intervention préparées par le responsable SAV — 29/10/2026
+
+Le responsable SAV prépare l'intervention, le technicien la reçoit prête.
+
+- **Rôle de l'appareil** (Réglages → « Rôle sur cet appareil ») : *Technicien* ou
+  *Responsable SAV*. Changer de rôle recharge l'application ; les rapports du technicien et
+  les fiches du responsable SAV sont rangés à part, rien n'est perdu en changeant.
+- **Responsable SAV** : un écran « Fiche d'intervention à préparer » :
+  - client (annuaire), contact, adresse, lieu, machine(s), date prévue, type, objet, langue ;
+  - **pièces à emporter** (dénomination, référence, quantité, machine) ;
+  - technicien destinataire et son e-mail (les derniers utilisés sont proposés), autres
+    techniciens prévus, **consignes** (accès, EPI, contact à l'arrivée…) ;
+  - **Envoyer par e-mail** (message tout prêt avec le résumé et le lien), **Copier le
+    lien**, **Copier le message**, **Partager** ; liste des **fiches préparées** (rouvrir,
+    modifier, renvoyer).
+- **Le lien** contient la fiche elle-même, compressée, après le « # » : elle n'est déposée
+  sur aucun serveur (le site ne reçoit jamais cette partie de l'adresse). Environ
+  700 caractères pour une fiche courante.
+- **Technicien** : en touchant le lien, l'application présente la fiche reçue
+  (client, machine, date, pièces à emporter, consignes) puis **crée l'intervention
+  pré-remplie** : client, machines, type, objet, date prévue, collègues, pièces, consignes
+  (rappelées en tête de l'intervention). L'intervention en cours reste dans l'historique.
+  Une fiche reçue reste à l'écran tant qu'elle n'est pas utilisée ; un lien déjà utilisé est
+  signalé.
+- **iPhone, application installée sur l'écran d'accueil** : le lien s'ouvre dans Safari ;
+  « Copier la fiche » puis, dans l'application, Menu → **Recevoir une fiche** (coller).
+- **Pièces préparées** : pour chacune, le technicien touche **Laissée sur site** ou
+  **Rapportée** (et ajuste la quantité laissée). Seules les pièces laissées sur site
+  figurent dans le rapport du client ; une pièce sans choix est signalée avant la
+  soumission.
+
+# Formation des opérateurs — 29/10/2026
+
+Nouvel onglet **Formations** dans les évènements, pour prouver qu'un opérateur a été formé.
+
+- **Assistant en 4 étapes** (troisième choix « Formation » de « Ajouter un évènement », ou
+  bouton « Nouvelle formation » de l'onglet) :
+  1. **sujets**, un ou plusieurs (Conduite de la machine, Changement de format, Nettoyage
+     et hygiène, Maintenance de premier niveau, Sécurité de la machine, Prise en main après
+     mise en service), plus un sujet ou une précision écrits à la main, et machine concernée ;
+  2. **programme** : date, heures de début et de fin (durée calculée), formateur, points
+     abordés à cocher (sécurité, présentation, marche/arrêt, conduite, format, alarmes,
+     nettoyage, maintenance) ou ajoutés à la main, **méthode d'évaluation** (mise en pratique,
+     observation au poste, questions orales, questionnaire écrit), **documents remis**,
+     contenu et observations (texte ou dictée) ;
+  3. **participants et émargement** : nom, fonction, **évaluation** (Acquis / À consolider /
+     Non acquis) et **signature au doigt** de chaque participant sous la mention « J'atteste
+     avoir suivi la formation … ». « Faire signer à la suite » fait passer le téléphone de
+     main en main ; « Reprendre les participants » recopie la liste d'une autre session ;
+  4. **bilan** : ce qui manque pour valider la formation (horaires, programme, évaluations,
+     signatures…), et photos de la session.
+- **Rapport (PDF, Word, version traduite)** : partie « Formation des opérateurs » avec, pour
+  chaque session, la fiche (formateur, date et horaires, méthode, documents), le programme,
+  la **feuille d'émargement** (n°, nom, fonction, évaluation, signature), le bilan et
+  l'attestation des participants et du formateur. La synthèse compte les opérateurs formés et
+  la validation finale ajoute : « Le client confirme que les opérateurs listés … ont suivi la
+  formation décrite ».
+- **Soumission** : une formation incomplète (signature ou évaluation manquante…) est signalée
+  avant l'envoi.
+- Les signatures des participants sont rangées avec les photos (enregistrement léger, reprises
+  dans la sauvegarde) ; tous les libellés sont traduits dans les 6 langues du rapport.
+
+Correction : le titre « Validation » pouvait rester seul en bas de page quand la mention du
+client était longue (pièces, trajet) : il réserve maintenant la hauteur exacte du bloc.
+
+# Revue complète — 29/10/2026
+
+Corrections
+- **« Ajuster » (intervention d'une journée) décalait les heures.** Les champs date-heure
+  affichaient l'heure UTC (06:00 au lieu de 08:00) et chaque « Enregistrer » avançait le
+  début et la fin de 1 à 2 heures. Ils affichent maintenant l'heure locale.
+- **iPhone : zoom à chaque champ touché.** Safari zoome la page quand un champ est écrit en
+  moins de 16 px (ils étaient à 15,5 px) ; les champs passent à 16 px sur iPhone et iPad.
+- **Signature du client :** les champs « Nom du signataire » et « Fonction » n'avaient pas le
+  style des autres champs (petits cadres) ; chaque ouverture laissait un écouteur actif.
+- **Envoi :** le lien « Repli direct » ouvrait la messagerie deux fois.
+- **PDF :** le titre « Pièces de rechange » (ou d'un texte comme « Travaux à prévoir ») pouvait
+  rester seul en bas de page, son contenu partant sur la page suivante.
+- **Trajet d'une intervention sur plusieurs jours :** l'heure de départ du retour est
+  proposée à la fin du dernier jour (elle était vide) et l'arrivée aller au début du premier.
+
+Amélioration
+- **La sauvegarde complète emporte l'annuaire** : fiches complétées sur le terrain
+  (téléphones, e-mails, contacts ajoutés, logos) et liste clients importée. À l'import, les
+  fiches les plus récentes l'emportent ; la liste clients est reprise si le téléphone n'en a
+  pas encore. Avant, changer de téléphone faisait perdre tout l'annuaire.
+
+Nettoyage : code mort et doublons signalés par l'analyse automatique (aucune variable non
+définie, aucune erreur JavaScript en parcourant tous les écrans).
+
 # Chrono sur plusieurs jours et annuaire — 16/10/2026
 
 ## Chrono : une journée par jour

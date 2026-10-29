@@ -198,6 +198,22 @@
         return true;
       } catch (e) { return false; }
     },
+    /* Fiches de l'annuaire venant d'une sauvegarde : ajoutées, ou remplaçant la fiche
+       locale si elles sont plus récentes. Renvoie le nombre de fiches reprises. */
+    fusionnerFiches: function (fiches) {
+      if (!fiches || typeof fiches !== 'object') return 0;
+      const memo = this.memo();
+      let n = 0;
+      Object.keys(fiches).forEach(k => {
+        const f = fiches[k];
+        if (!f || !f.nom) return;
+        const local = memo[k];
+        if (!local || String(f.maj || '') > String(local.maj || '')) { memo[k] = f; n++; }
+      });
+      if (!n) return 0;
+      try { global.localStorage.setItem(CLE_MEMO, JSON.stringify(memo)); } catch (e) { return 0; }
+      return n;
+    },
     oublier: function (nom) {
       const memo = this.memo();
       delete memo[norm(nom)];

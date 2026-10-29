@@ -82,6 +82,11 @@ liste importée si nécessaire.
 - **Ajouter un évènement** : domaine (mécanique / électrique / automatisme) → texte **ou dictée
   vocale** → photo (annotation au doigt) → catégorie (Sécurité, Urgent, Priorité haute, Basse,
   Informatif). Chaque évènement reste **modifiable à tout moment**.
+- **Formation des opérateurs** : onglet *Formations* → **« Nouvelle formation »** : un ou plusieurs sujets →
+  programme (horaires, points abordés, méthode d'évaluation, documents remis) → chaque
+  participant avec sa fonction, son évaluation (Acquis / À consolider / Non acquis) et **sa
+  signature au doigt** (« Faire signer à la suite » pour passer le téléphone) → bilan. Le
+  rapport contient la feuille d'émargement signée.
 - **Pièces de rechange** : bouton **« ➕ Ajouter pièce de rechange »** (dénomination, référence, quantité)
   pour les pièces neuves remplacées ou laissées dans le stock client. Elles figurent dans un tableau
   dédié du rapport et la signature du client vaut acceptation du devis final.
@@ -97,6 +102,20 @@ liste importée si nécessaire.
   et au responsable SAV par mail / partage Android (Gmail). L'envoi demande du réseau ;
   **la création du rapport, elle, marche hors connexion**.
 - **Historique** : les rapports sont conservés dans le téléphone (relisibles, réexportables).
+
+## 4 bis. Fiche préparée par le responsable SAV
+
+Le responsable SAV peut préparer l'intervention à l'avance (client, machine, date, objet,
+pièces à emporter, consignes) et vous l'envoyer par e-mail.
+
+- **Touchez le lien de l'e-mail** : l'application affiche la fiche reçue → **« Créer
+  l'intervention »**. Tout est déjà rempli ; les consignes sont rappelées en tête.
+- **Pièces à emporter** : sur place, touchez pour chacune **« Laissée sur site »** ou
+  **« Rapportée »** (modifiez la quantité si vous n'en laissez qu'une partie). Seules les
+  pièces laissées sur site sont dans le rapport du client.
+- **iPhone, application installée sur l'écran d'accueil** : le lien s'ouvre dans Safari.
+  Touchez « Copier la fiche », puis dans l'application : **Menu → Recevoir une fiche** et
+  collez.
 
 ## 5. Précautions
 

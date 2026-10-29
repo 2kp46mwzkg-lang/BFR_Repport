@@ -208,6 +208,14 @@
         sz || 18, cls
       );
     },
+    // Formation des opérateurs : toque de diplômé
+    formation: function (sz, cls) {
+      return duo(
+        '<path d="M22 9 12 4 2 9l10 5 10-5z"/>',
+        '<path d="M22 9 12 4 2 9l10 5 10-5z"/><path d="M6 11.2V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.8"/><line x1="22" y1="9" x2="22" y2="15"/>',
+        sz || 18, cls
+      );
+    },
     folder: function (sz, cls) {
       return duo(
         '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',

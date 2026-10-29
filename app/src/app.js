@@ -13,7 +13,8 @@
   const $$ = (s, r) => Array.prototype.slice.call((r || document).querySelectorAll(s));
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const uid = (p) => (p || 'i') + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const todayISO = () => { const d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); };
+  // date locale AAAA-MM-JJ (aujourd'hui, ou la date donnée)
+  const todayISO = (quand) => { const d = quand || new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); };
 
   function getPath(o, p) { return p.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o); }
   function setPath(o, p, v) {
@@ -103,7 +104,34 @@
   const ICO = (typeof window !== 'undefined' && window.ICO) || (typeof global !== 'undefined' && global.ICO) || {};
 
   /* ===================== Réglages ===================================== */
-  const K = { settings: 'sav3.settings', rapport: 'sav3.rapport', rapports: 'sav3.rapports' };
+  /* Rôle de l'appareil (Réglages) :
+     - technicien : il réalise les interventions et envoie les rapports ;
+     - responsable SAV : il prépare les fiches d'intervention et les envoie aux
+       techniciens par un lien. Ses fiches sont rangées à part (« sav3.fiche » et
+       « sav3.fiches »), jamais mêlées aux rapports ; changer de rôle recharge l'appli. */
+  const RSAV = (function () { const s = Store.get('sav3.settings', {}); return !!(s && s.role === 'rsav'); })();
+  const K = { settings: 'sav3.settings',
+    rapport: RSAV ? 'sav3.fiche' : 'sav3.rapport', rapports: RSAV ? 'sav3.fiches' : 'sav3.rapports' };
+
+  /* Participants des formations d'un rapport (émargement). */
+  function participantsDe(r) {
+    const out = [];
+    ((r && r.evenements) || []).forEach(function (ev) {
+      if (ev && ev.nature === 'formation' && ev.formation && Array.isArray(ev.formation.participants)) {
+        ev.formation.participants.forEach(function (pa) { if (pa) out.push(pa); });
+      }
+    });
+    return out;
+  }
+  /* Copie d'un évènement sans les signatures de ses participants (celles pour
+     lesquelles retirer(pa) répond oui) : elles restent dans la base photos. */
+  function sansSignaturesParticipants(ev, retirer) {
+    if (!ev || ev.nature !== 'formation' || !ev.formation || !Array.isArray(ev.formation.participants)) return ev;
+    return Object.assign({}, ev, { formation: Object.assign({}, ev.formation, {
+      participants: ev.formation.participants.map(pa => (pa && pa.signature && (!retirer || retirer(pa)))
+        ? Object.assign({}, pa, { signature: '' }) : pa)
+    }) });
+  }
 
   /* ===================== Base de données locale (IndexedDB) ===================== */
   /* IndexedDB permet de stocker l'intégralité des rapports et de toutes leurs photos
@@ -220,6 +248,9 @@
       (rapport.pieces || []).forEach(function (pc) {
         if (pc && pc.id && pc.photo) garder('pc_' + pc.id, pc.photo, 'piece');
       });
+      participantsDe(rapport).forEach(function (pa) {
+        if (pa.id && pa.signature) garder('sigp_' + pa.id, pa.signature, 'signatureParticipant');
+      });
       if (rapport.signatureClient && rapport.signatureClient.dataUrl) {
         sauverPhoto('sig_client_' + rapport.id, rapport.signatureClient.dataUrl, 'signatureClient', rapport.id);
       }
@@ -235,7 +266,8 @@
     function alleger(r, enregistrees) {
       const sans = (ph) => (ph && ph.id && ph.dataUrl && enregistrees.has(ph.id)) ? Object.assign({}, ph, { dataUrl: '' }) : ph;
       const o = Object.assign({}, r);
-      o.evenements = (r.evenements || []).map(ev => Object.assign({}, ev, { photos: (ev.photos || []).map(sans) }));
+      o.evenements = (r.evenements || []).map(ev => sansSignaturesParticipants(
+        Object.assign({}, ev, { photos: (ev.photos || []).map(sans) }), (pa) => pa.signeA && enregistrees.has('sigp_' + pa.id)));
       o.photosLibres = (r.photosLibres || []).map(sans);
       o.pieces = (r.pieces || []).map(pc => (pc && pc.id && pc.photo && enregistrees.has('pc_' + pc.id)) ? Object.assign({}, pc, { photo: '' }) : pc);
       return o;
@@ -257,6 +289,10 @@
         // une pièce sans photo est normale : on ne la compte comme « manquante » que si
         // elle en avait une (champ présent)
         if (pc && pc.id && 'photo' in pc) out.push({ id: 'pc_' + pc.id, lire: () => pc.photo, ecrire: (v) => { pc.photo = v; } });
+      });
+      // signatures des participants à une formation (émargement) : celles recueillies
+      participantsDe(r).forEach(function (pa) {
+        if (pa.id && pa.signeA) out.push({ id: 'sigp_' + pa.id, lire: () => pa.signature, ecrire: (v) => { pa.signature = v; } });
       });
       // signatures : seulement si elles ont été recueillies (date renseignée)
       if (r.signatureClient && r.signatureClient.date) out.push({ id: 'sig_client_' + r.id, lire: () => r.signatureClient.dataUrl, ecrire: (v) => { r.signatureClient.dataUrl = v; } });
@@ -497,7 +533,13 @@
           if (u) pc.photo = u;
         }
       }
-      // 4. Signatures
+      // 4. Signatures (émargement des formations, puis client et technicien)
+      for (const pa of participantsDe(rapport)) {
+        if (pa.id && pa.signeA && !pa.signature) {
+          const u = await getPhoto('sigp_' + pa.id);
+          if (u) pa.signature = u;
+        }
+      }
       if (rapport.signatureClient && (!rapport.signatureClient.dataUrl || rapport.signatureClient.dataUrl === '')) {
         const u = await getPhoto('sig_client_' + rapport.id);
         if (u) rapport.signatureClient.dataUrl = u;
@@ -574,7 +616,9 @@
     categories: CATEGORIES_DEFAUT,
     canevas: null,                 // null = canevas par défaut (Report.canevasDefaut())
     numeroPrefixe: '',
-    iconeApp: 'opt1'
+    iconeApp: 'opt1',
+    role: 'technicien',            // 'technicien' ou 'rsav' (responsable SAV)
+    lienApp: ''                    // adresse de l'application pour les liens des fiches (vide = celle-ci)
   };
 
   function fusion(base, modif) {
@@ -750,7 +794,9 @@
       },
       actions: '', aPrevoir: '', resumeTechnicien: '', noteInterne: '',
       travauxTermines: '', faitLe: todayISO(),
-      signatureClient: { nom: '', fonction: '', dataUrl: '', date: '', heure: '' }
+      signatureClient: { nom: '', fonction: '', dataUrl: '', date: '', heure: '' },
+      // responsable SAV : technicien destinataire de la fiche, collègues prévus, consignes
+      envoi: { nom: '', email: '', autres: '', consignes: '', envoyeeLe: '' }
     };
   }
 
@@ -815,7 +861,8 @@
   }
 
   // Initialisation asynchrone du stockage IndexedDB et auto-guérison des photos
-  if (typeof RapportDB !== 'undefined') {
+  // (pas pour les fiches du responsable SAV : elles n'ont pas de photos)
+  if (!RSAV && typeof RapportDB !== 'undefined') {
     (async function initialiserStockage() {
       try {
         if (R && R.id) {
@@ -867,6 +914,7 @@
     return d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : null;
   }
   function sauvegardeEnRetard() {
+    if (RSAV) return false;
     const nbRapports = Store.get(K.rapports, []).filter(r => r && !rapportVierge(r)).length;
     if (!nbRapports) return false;
     const j = joursDepuisSauvegarde();
@@ -887,7 +935,8 @@
      rien d'autre ne pouvait y être enregistré (réglages, fiches clients…). */
   function sansPhotos(r) {
     const c = JSON.parse(JSON.stringify(r));
-    c.evenements = (c.evenements || []).map(e => Object.assign({}, e, {
+    // signatures d'émargement recueillies : elles sont dans la base photos, comme les photos
+    c.evenements = (c.evenements || []).map(e => Object.assign({}, sansSignaturesParticipants(e, (pa) => !!pa.signeA), {
       photos: (e.photos || []).map(p => ({ id: p.id, legende: p.legende || '', annotations: p.annotations || [], dataUrl: '' }))
     }));
     c.photosLibres = (c.photosLibres || []).map(p => ({
@@ -903,6 +952,18 @@
   function sauver(silencieux) {
     synchroniserEntites();
     R.maj = new Date().toISOString();
+
+    if (RSAV) {
+      // fiche en préparation + liste des fiches préparées (pas de photos, localStorage suffit)
+      const ok = Store.set(K.rapport, R);
+      const liste = Store.get(K.rapports, []).filter(x => x && x.id !== R.id);
+      if (!rapportVierge(R)) liste.unshift(JSON.parse(JSON.stringify(R)));
+      if (liste.length > 80) liste.length = 80;
+      Store.set(K.rapports, liste);
+      dirty = false;
+      if (!silencieux) toast(ok ? 'Enregistré' : 'Mémoire pleine');
+      return ok;
+    }
 
     // 1. Persistance intégrale dans IndexedDB (aucun quota de 5 Mo, 100 % des photos conservées)
     if (typeof RapportDB !== 'undefined') {
@@ -1020,7 +1081,7 @@
     R.chrono.debut = new Date().toISOString();
     R.chrono.fin = null; R.chrono.pauses = []; R.chrono.enPause = false; R.chrono.debutPause = null;
     R.statut = 'en cours';
-    if (!R.date) R.date = todayISO();
+    if (!R.date || (R.fiche && !(R.jours || []).length)) R.date = todayISO();   // fiche : date prévue → jour réel
     planifier(); rendreChrono(); sauver(true);
     toast('Intervention démarrée à ' + Report.heureFr(R.chrono.debut));
   }
@@ -1215,6 +1276,11 @@
       hn.textContent = (R.signatureClient.dataUrl ? '✔ Signé • ' : '') + 'N° ' + (R.numero || '—') +
         (R.client.nom ? ' • ' + R.client.nom : '');
     }
+    if (RSAV) {
+      rendreEntete();
+      rendreFicheRSAV();
+      return;
+    }
     rendreChrono();
     rendreEntete();
     rendreEvenements(e);
@@ -1239,11 +1305,14 @@
       ? `<div><span>Techniciens</span><strong>${esc(techsValides.map(t => t.nom + (t.fonction ? ' (' + t.fonction + ')' : '')).join(' · '))}</strong></div>`
       : '';
 
-    zone.innerHTML = `
+    const fiche = R.fiche || null;
+    zone.innerHTML = blocFichesRecues() + `
       <div class="card">
-        <h2>Intervention <button class="btn sm grey" data-a="editer-client">${(ICO.pen && ICO.pen(14)) || ''} ${renseigne ? 'Modifier' : 'Renseigner'}</button></h2>
+        <h2>${RSAV ? 'Fiche d\'intervention à préparer' : 'Intervention'} <button class="btn sm grey" data-a="editer-client">${(ICO.pen && ICO.pen(14)) || ''} ${renseigne ? 'Modifier' : 'Renseigner'}</button></h2>
+        ${!RSAV && fiche ? `<p class="small fiche-origine">${(ICO.mail && ICO.mail(13)) || ''} Préparée par ${esc((fiche.par && fiche.par.nom) || 'le SAV')}${fiche.datePrevue ? ' — prévue le ' + esc(Report.frDate(fiche.datePrevue)) : ''}</p>` : ''}
         ${renseigne
           ? `<div class="recap">
+              ${RSAV ? `<div><span>Date prévue</span><strong>${esc(Report.frDate(R.date) || '—')}</strong></div>` : ''}
               <div><span>Client</span><strong>${esc(c.nom || '—')}</strong></div>
               <div><span>Lieu</span><strong>${esc(c.lieu || c.adresse || '—')}</strong></div>
               ${recapMachines}
@@ -1255,12 +1324,14 @@
                 ? 'français + ' + esc(I18N.natif(R.langue.code))
                 : 'français'}</strong></div>
             </div>
-            <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--bord,#cbd5e1)">
+            ${!RSAV && fiche && fiche.consignes ? `<div class="sticky-note fiche-consignes" style="margin-top:10px"><strong>Consignes du SAV</strong><br>${esc(fiche.consignes).replace(/\n/g, '<br>')}</div>` : ''}
+            ${RSAV ? '' : `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--bord,#cbd5e1)">
               <button type="button" class="btn sm" data-a="sms-arrivee" style="width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:#f0f9ff;border:1.5px solid var(--bleu,#06baf2);color:#0284c7;font-weight:600;padding:7px 10px;font-size:12.5px">
                 ${(ICO.sms && ICO.sms(15)) || '💬'} Prévenir le contact par SMS (arrivée sur site)
               </button>
-            </div>`
-          : `<p class="hint">Renseignez le client et la machine : ces informations se retrouvent dans le rapport.</p>
+            </div>`}`
+          : `<p class="hint">${RSAV ? 'Renseignez le client, la machine, la date prévue et l\'objet : ils partent dans la fiche envoyée au technicien.'
+              : 'Renseignez le client et la machine : ces informations se retrouvent dans le rapport.'}</p>
              <button class="btn wide" data-a="editer-client">Client & machine</button>`}
       </div>`;
   }
@@ -1270,6 +1341,10 @@
   const STYLE_TRAVAIL = { couleur: '#15803d', fond: '#dcfce7' };
   const FONDS_RESULTAT = { termine: '#ccfbf1', resolu: '#dcfce7', partiel: '#ffedd5', surveiller: '#fef3c7' };
   function styleEvenement(ev) {
+    if (Report.estFormation(ev)) {
+      return { couleur: Report.COULEUR_FORMATION, fond: Report.FOND_FORMATION, libelle: 'Formation',
+        ico: (ICO.formation && ICO.formation(16)) || '🎓' };
+    }
     if (Report.estTravail(ev)) {
       return { couleur: STYLE_TRAVAIL.couleur, fond: STYLE_TRAVAIL.fond, libelle: 'Travail réalisé',
         ico: (ICO.wrench && ICO.wrench(16)) || '🔧' };
@@ -1287,7 +1362,44 @@
     return ev.corrige ? `<span class="ev-mention">✓ Corrigé pendant l'intervention</span>` : '';
   }
 
+  /* Carte d'une session de formation : intitulé, participants, évaluations,
+     émargement, et ce qui manque pour la valider. */
+  function carteFormation(ev) {
+    const st = styleEvenement(ev);
+    const b = Report.bilanFormation(ev), f = b.f;
+    const horaires = [f.debut, f.fin].filter(Boolean).join(' - ');
+    const photos = (ev.photos || []).filter(p => p && p.dataUrl);
+    const evals = Report.EVALUATIONS;
+    const pastilles = ['acquis', 'consolider', 'non'].filter(k => b[k])
+      .map(k => `<span class="ev-mention" style="--c:${evals[k].couleur};--f:${evals[k].fond}">${esc(evals[k].libelle)} : ${b[k]}</span>`).join(' ');
+    return `<div class="ev-carte formation" data-ev="${ev.id}" style="--c:${st.couleur};--f:${st.fond}">
+      <div class="ev-tete">
+        <span class="ev-dom">${st.ico} ${esc(f.titre || 'Formation')}</span>
+        ${ev.machineNom ? `<span class="pill" style="background:var(--bfr-primary-light);color:var(--bfr-secondary);font-weight:600;border:1px solid var(--bfr-primary-border)">${(ICO.gear && ICO.gear(13)) || ''} ${esc(ev.machineNom)}</span>` : ''}
+        <span class="ev-heure">${esc(horaires || Report.heureFr(ev.heure))}</span>
+      </div>
+      <div class="ev-corps">
+        ${photos.length ? `<div class="ev-vignettes">${photos.slice(0, 2).map(p => `<img src="${p.dataUrl}" alt="">`).join('')}</div>` : ''}
+        <div class="ev-texte-bloc">
+          <p class="ev-texte"><strong>${b.n} participant${b.n > 1 ? 's' : ''}</strong>${b.n ? ' : ' + esc(b.participants.slice(0, 4).map(p => p.nom).join(', ')) + (b.n > 4 ? '…' : '') : ''}</p>
+          ${pastilles}
+          <div class="fm-carte-etat ${b.complet ? 'ok' : 'ko'}">${b.complet
+            ? '✓ Formation complète — émargement ' + b.signes + '/' + b.n
+            : 'À compléter : ' + esc(b.manques.join(', '))}</div>
+        </div>
+      </div>
+      <div class="ev-pied">
+        <span class="pill">${f.points.length} point(s) abordé(s)</span>
+        <span class="pill${b.n && b.signes === b.n ? '' : ' surv'}">émargement ${b.signes}/${b.n}</span>
+        <div class="ev-actions-pied">
+          <button type="button" class="btn-ev-pill modifier" data-a="modifier-ev" data-id="${ev.id}" title="Compléter cette formation">${(ICO.pen && ICO.pen(13)) || ''} Compléter</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function carteEvenement(ev, i) {
+    if (Report.estFormation(ev)) return carteFormation(ev);
     const st = styleEvenement(ev), dom = domDe(ev.domaine);
     const travail = Report.estTravail(ev);
     const texte = Report.valeur(ev.texte);
@@ -1325,10 +1437,11 @@
     if (!zone) return;
     const evs = R.evenements.slice().sort((a, b) => new Date(a.heure || 0) - new Date(b.heure || 0));
     const travaux = evs.filter(x => Report.estTravail(x));
-    const constats = evs.filter(x => !Report.estTravail(x));
-    /* Deux listes dès qu'il y a un travail réalisé ou un type d'intervention ;
-       un ancien rapport sans travaux garde sa liste unique. */
-    const separer = travaux.length > 0 || !!R.typeIntervention;
+    const constats = evs.filter(x => Report.estConstat(x));
+    const formations = evs.filter(x => Report.estFormation(x));
+    /* Listes séparées dès qu'il y a un travail réalisé, une formation ou un type
+       d'intervention ; un ancien rapport sans travaux garde sa liste unique. */
+    const separer = travaux.length > 0 || formations.length > 0 || !!R.typeIntervention;
     const groupe = (cls, ico, titre, liste, vide) =>
       `<div class="ev-groupe-titre ${cls}">${ico} ${titre} <span class="compte">${liste.length}</span></div>` +
       (liste.length ? `<div class="ev-liste">${liste.map(carteEvenement).join('')}</div>` : `<p class="hint">${vide}</p>`);
@@ -1336,11 +1449,17 @@
       'Aucun travail réalisé pour l\'instant.');
     const blocConstats = groupe('constats', (ICO.eye && ICO.eye(16)) || '🔍', 'Constats', constats,
       'Aucun constat pour l\'instant.');
+    // onglet « Formations » : toujours présent, avec son bouton d'ajout
+    const blocFormations =
+      `<div class="ev-groupe-titre formations">${(ICO.formation && ICO.formation(16)) || '🎓'} Formations <span class="compte">${formations.length}</span>
+         <button type="button" class="btn-ev-pill ajout-formation" data-a="ajouter-formation">${(ICO.plus && ICO.plus(13)) || '+'} Nouvelle formation</button></div>` +
+      (formations.length ? `<div class="ev-liste">${formations.map(carteEvenement).join('')}</div>`
+        : '<p class="hint">Aucune formation pour l\'instant. Une formation réunit le programme, l\'évaluation et la signature de chaque opérateur formé.</p>');
     zone.innerHTML = `
       <div class="card">
         <h2>Évènements <span class="pill compteur-ev">0</span></h2>
         <p class="hint">${separer
-          ? '<strong>Travaux réalisés</strong> : ce que vous avez fait. <strong>Constats</strong> : ce que vous avez observé, avec une priorité. Appuyez sur un évènement pour le compléter ; « En travail / En constat » le change de liste.'
+          ? '<strong>Travaux réalisés</strong> : ce que vous avez fait. <strong>Constats</strong> : ce que vous avez observé, avec une priorité. <strong>Formations</strong> : les opérateurs formés, avec leur émargement. Appuyez sur un évènement pour le compléter ; « En travail / En constat » le change de liste.'
           : 'Chaque constat, défaut ou information relevée sur la machine. Appuyez sur un évènement pour le compléter ou le corriger à tout moment.'}</p>
         ${e.securite ? `<div class="alerte-securite">${(ICO.shieldAlert && ICO.shieldAlert(18)) || ''} ${e.securite} point(s) de sécurité ou d'urgence — ils apparaîtront en tête des constats.</div>` : ''}
         ${!evs.length
@@ -1348,10 +1467,11 @@
                <span class="ev-vide-ico">${(ICO.fileText && ICO.fileText(36)) || ''}</span>
                <p>Aucun évènement pour l'instant.</p>
                <p class="small">Commencez par le premier : travail ou constat → annotation → photo → résultat ou catégorie.</p>
+               <button type="button" class="btn-ev-pill ajout-formation" data-a="ajouter-formation">${(ICO.formation && ICO.formation(13)) || '🎓'} Ajouter une formation des opérateurs</button>
              </div>`
           : !separer
             ? `<div class="ev-liste">${evs.map(carteEvenement).join('')}</div>`
-            : (R.typeIntervention === 'audit' ? blocConstats + blocTravaux : blocTravaux + blocConstats)}
+            : (R.typeIntervention === 'audit' ? blocConstats + blocTravaux : blocTravaux + blocConstats) + blocFormations}
       </div>`;
   }
 
@@ -1381,6 +1501,7 @@
           ${(R.pieces && R.pieces.length) ? `<span class="pill">${R.pieces.length} pièce${R.pieces.length > 1 ? 's' : ''}</span>` : ''}
         </h2>
         <p class="hint">Pièces échangées ou laissées dans le stock du client sur place. La signature du client vaudra pour acceptation du devis final.</p>
+        ${(R.pieces || []).some(p => p && p.prevue) ? `<p class="hint" style="color:#9a3412"><strong>Pièces préparées par le SAV :</strong> indiquez pour chacune si elle reste sur site ou revient ; seules les pièces laissées sur site figurent dans le rapport.</p>` : ''}
         ${rendreTableauPieces()}
         <p class="hint" style="margin-top:8px">Ajout d'une pièce : bouton « Ajouter une pièce » en bas de l'écran.</p>
       </div>
@@ -1440,16 +1561,29 @@
   }
 
   /* ===================== Pièces de rechange ============================ */
+  /* Choix du technicien pour une pièce préparée par le SAV : laissée sur site ou rapportée. */
+  function choixPiecePrevue(p) {
+    if (RSAV || !p.prevue) return '';
+    const bouton = (statut, libelle) => `<button type="button" class="piece-choix${p.statut === statut ? ' on ' + statut : ''}"
+      data-a="piece-statut" data-id="${esc(p.id)}" data-statut="${statut}">${libelle}</button>`;
+    return `<div class="piece-prevue">
+      <span class="piece-prevue-lib">Préparée par le SAV${p.quantitePrevue && p.quantitePrevue !== p.quantite ? ' (' + esc(p.quantitePrevue) + ' prévue' + (p.quantitePrevue > 1 ? 's' : '') + ')' : ''}${p.statut ? '' : ' — <strong>à indiquer</strong>'}</span>
+      <div class="piece-choix-ligne">${bouton('laissee', '✓ Laissée sur site')}${bouton('rapportee', '↩ Rapportée')}</div></div>`;
+  }
+
   function rendreTableauPieces() {
     const pcs = R.pieces || [];
     if (!pcs.length) {
-      return '<p class="small" style="font-style:italic;color:var(--gris);padding:4px 0">Aucune pièce de rechange enregistrée pour cette intervention.</p>';
+      return '<p class="small" style="font-style:italic;color:var(--gris);padding:4px 0">' +
+        (RSAV ? 'Aucune pièce à emporter pour l\'instant.' : 'Aucune pièce de rechange enregistrée pour cette intervention.') + '</p>';
     }
+    // responsable SAV : pas de photo (elle ne voyage pas dans le lien de la fiche)
+    const colPhoto = !RSAV;
     return `<div style="overflow-x:auto;margin:6px 0">
       <table style="width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--bord);border-radius:8px;overflow:hidden">
         <thead>
           <tr style="background:#f8fafc;border-bottom:1.5px solid var(--bord);text-align:left;color:var(--gris)">
-            <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;width:48px;text-align:center">Photo</th>
+            ${colPhoto ? '<th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase;width:48px;text-align:center">Photo</th>' : ''}
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Dénomination</th>
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Référence</th>
             <th style="padding:7px 9px;font-size:11.5px;text-transform:uppercase">Machine (N° série)</th>
@@ -1463,15 +1597,15 @@
               ? Report.infoMachinePiece(p, R)
               : { serie: p.machineSerie || '', designation: p.machineNom || '' };
             return `
-            <tr style="border-bottom:1px solid var(--bord);background:${idx % 2 === 1 ? '#fcfdff' : '#fff'}">
-              <td style="padding:6px 8px;text-align:center;vertical-align:middle">
+            <tr style="border-bottom:1px solid var(--bord);background:${p.prevue && p.statut === 'rapportee' ? '#f8fafc' : (idx % 2 === 1 ? '#fcfdff' : '#fff')}" class="${p.prevue && p.statut === 'rapportee' ? 'piece-rapportee' : ''}">
+              ${colPhoto ? `<td style="padding:6px 8px;text-align:center;vertical-align:middle">
                 ${p.photo
                   ? `<button type="button" data-a="voir-photo-pc" data-id="${esc(p.id)}" style="background:none;border:none;padding:0;cursor:pointer;display:inline-block;vertical-align:middle" title="Agrandir la photo">
                        <img src="${p.photo}" alt="${esc(p.denomination || 'pièce')}" style="width:38px;height:38px;object-fit:cover;border-radius:4px;border:1px solid var(--bord);display:block">
                      </button>`
                   : '<span style="color:#94a3b8;font-size:11px">—</span>'}
-              </td>
-              <td style="padding:7px 9px;vertical-align:middle"><strong>${esc(p.denomination || '—')}</strong></td>
+              </td>` : ''}
+              <td style="padding:7px 9px;vertical-align:middle"><strong>${esc(p.denomination || '—')}</strong>${choixPiecePrevue(p)}</td>
               <td style="padding:7px 9px;font-family:ui-monospace,monospace;color:#475569;vertical-align:middle">${esc(p.reference || '—')}</td>
               <td style="padding:7px 9px;vertical-align:middle">
                 ${mInfo.serie ? `<div style="font-weight:600;color:var(--bleu,#0369a1);font-size:12.5px"><span style="font-size:10.5px;font-weight:normal;color:#64748b">N°</span> ${esc(mInfo.serie)}</div>` : ''}
@@ -1589,8 +1723,9 @@
     }
 
     const panneau = Ouvrir.ouvrir(null, `<div class="panel">
-      <div class="grab"></div><h3>${edit ? 'Modifier la pièce' : 'Ajouter une pièce de rechange'}</h3>
-      <p class="sub">Pièce neuve de remplacement utilisée ou laissée dans le stock du client.</p>
+      <div class="grab"></div><h3>${edit ? 'Modifier la pièce' : (RSAV ? 'Ajouter une pièce à emporter' : 'Ajouter une pièce de rechange')}</h3>
+      <p class="sub">${RSAV ? 'Pièce que le technicien emporte : il indiquera sur place si elle reste chez le client.'
+        : 'Pièce neuve de remplacement utilisée ou laissée dans le stock du client.'}</p>
 
       <div class="field"><label>Machine concernée</label>
         <select id="pcMachine" style="width:100%;padding:9px 11px;border-radius:6px;border:1px solid var(--bord,#cbd5e1);background:#fff;font-size:0.95rem;color:#1e293b">
@@ -1609,12 +1744,19 @@
       <div class="field"><label>Quantité</label>
         <input type="number" id="pcQte" min="1" step="1" value="${esc(p.quantite || 1)}"></div>
 
-      <div class="field">
+      ${!RSAV && p.prevue ? `<div class="field"><label>Pièce préparée par le SAV${p.quantitePrevue ? ' — ' + esc(p.quantitePrevue) + ' prévue' + (p.quantitePrevue > 1 ? 's' : '') : ''}</label>
+        <div class="piece-choix-ligne">
+          <label class="piece-radio"><input type="radio" name="pcStatut" value="laissee"${p.statut === 'laissee' ? ' checked' : ''}> Laissée sur site</label>
+          <label class="piece-radio"><input type="radio" name="pcStatut" value="rapportee"${p.statut === 'rapportee' ? ' checked' : ''}> Rapportée</label>
+        </div>
+        <p class="hint" style="margin-top:4px">Laissée sur site : indiquez la quantité réellement laissée chez le client ; seule elle figure dans le rapport.</p></div>` : ''}
+
+      ${RSAV ? '' : `<div class="field">
         <label>Photo de la pièce / étiquette (facultatif)</label>
         <div id="pcPhotoZone">${htmlZonePhoto(photoEnCours)}</div>
         <input type="file" id="pcPhotoCam" accept="image/*" capture="environment" style="display:none">
         <input type="file" id="pcPhotoGal" accept="image/*" style="display:none">
-      </div>
+      </div>`}
 
       <div class="btnrow"><button class="btn grey" data-a="fermer">Annuler</button>
         <button class="btn" data-a="sauvegarder-piece">${edit ? 'Enregistrer' : 'Ajouter la pièce'}</button></div></div>`, (pEl) => {
@@ -1694,7 +1836,9 @@
           }
         }
 
+        const choixStatut = pEl.querySelector('input[name="pcStatut"]:checked');
         if (edit) {
+          if (p.prevue && choixStatut) p.statut = choixStatut.value;
           p.denomination = denom;
           p.reference = ref;
           p.quantite = qte;
@@ -1733,7 +1877,7 @@
   function natureParDefaut() {
     if (R.typeIntervention === 'sav') return 'travail';
     if (R.typeIntervention === 'audit') return 'constat';
-    const dernier = (R.evenements || []).filter(x => x.domaine)
+    const dernier = (R.evenements || []).filter(x => x.domaine && !Report.estFormation(x))
       .sort((a, b) => new Date(b.heure || 0) - new Date(a.heure || 0))[0];
     return (dernier && Report.estTravail(dernier)) ? 'travail' : 'constat';
   }
@@ -1741,39 +1885,53 @@
   /* Bouton « En travail / En constat » d'une carte : reclasse l'évènement. */
   function basculerNature(id) {
     const ev = (R.evenements || []).find(x => x.id === id);
-    if (!ev) return;
+    if (!ev || Report.estFormation(ev)) return;
     ev.nature = Report.estTravail(ev) ? 'constat' : 'travail';
     if (!ev.categorie) ev.categorie = 'INFO';
     planifier(); rendreTout();
     toast(ev.nature === 'travail' ? 'Classé dans les travaux réalisés' : 'Classé dans les constats');
   }
 
-  function ajouterEvenement() {
-    synchroniserEntites();
-    const machinesValides = (R.machines || []).filter(m => m && (m.designation || m.modele || m.serie));
-    const ev = Assistant.nouvelEvenement({
-      nature: natureParDefaut(),
-      machineId: (machinesValides.length === 1) ? machinesValides[0].id : '',
-      machineNom: (machinesValides.length === 1) ? machinesValides[0].designation : ''
-    });
-    R.evenements.push(ev);
-    planifier();
-    Assistant.ouvrir(ev, {
+  /* Contexte de l'assistant : réglages, machines, et pour les formations le
+     formateur proposé, les autres sessions (reprise des participants) et la
+     signature d'émargement. */
+  function contexteAssistant(ev, machinesValides, surFermer) {
+    return {
       reglages: S,
       machines: machinesValides,
       toast: toast,
+      formateur: Report.nomTechnicien(R, S),
+      autresFormations: (courant) => (R.evenements || [])
+        .filter(x => Report.estFormation(x) && x.id !== (courant && courant.id))
+        .map(x => { const f = Report.formationDe(x); return { id: x.id, intitule: f.titre, participants: f.participants }; }),
+      signer: signerParticipant,
       onMaj: () => { planifier(); rendreTout(); },
       onSupprimer: (x) => {
         R.evenements = R.evenements.filter(e => e.id !== x.id);
         planifier(); rendreTout();
       },
-      onFermer: () => {
-        // un évènement vide (créé puis abandonné) est supprimé automatiquement
-        const vide = !ev.domaine && !Report.valeur(ev.texte) && !(ev.photos || []).length;
-        if (vide) R.evenements = R.evenements.filter(e => e.id !== ev.id);
-        planifier(); rendreTout();
-      }
+      onFermer: () => { if (surFermer) surFermer(); planifier(); rendreTout(); }
+    };
+  }
+
+  /* nature : 'formation' pour ouvrir directement une formation ; sinon la nature
+     proposée selon le type d'intervention (l'appel par le bouton passe un clic). */
+  function ajouterEvenement(nature) {
+    synchroniserEntites();
+    const machinesValides = (R.machines || []).filter(m => m && (m.designation || m.modele || m.serie));
+    const ev = Assistant.nouvelEvenement({
+      nature: typeof nature === 'string' ? nature : natureParDefaut(),
+      formateur: Report.nomTechnicien(R, S),
+      machineId: (machinesValides.length === 1) ? machinesValides[0].id : '',
+      machineNom: (machinesValides.length === 1) ? machinesValides[0].designation : ''
     });
+    R.evenements.push(ev);
+    planifier();
+    Assistant.ouvrir(ev, contexteAssistant(ev, machinesValides, () => {
+      // un évènement vide (créé puis abandonné) est supprimé automatiquement
+      const vide = !Report.evRenseigne(ev) && !(ev.photos || []).length;
+      if (vide) R.evenements = R.evenements.filter(e => e.id !== ev.id);
+    }));
   }
 
   function editerEvenement(id) {
@@ -1781,14 +1939,7 @@
     const ev = R.evenements.find(e => e.id === id);
     if (!ev) return;
     const machinesValides = (R.machines || []).filter(m => m && (m.designation || m.modele || m.serie));
-    Assistant.ouvrir(ev, {
-      reglages: S,
-      machines: machinesValides,
-      toast: toast,
-      onMaj: () => { planifier(); rendreTout(); },
-      onSupprimer: (x) => { R.evenements = R.evenements.filter(e => e.id !== x.id); planifier(); rendreTout(); },
-      onFermer: () => { planifier(); rendreTout(); }
-    });
+    Assistant.ouvrir(ev, contexteAssistant(ev, machinesValides));
   }
 
   /* ===================== Visionneuse Photo Plein Écran (Lightbox) ==== */
@@ -2052,7 +2203,7 @@
 
     const ouvrir = (e) => Ouvrir.ouvrir(e, `<div class="panel">
       <div class="grab"></div><h3>Client & machine</h3>
-      <p class="sub">Ces informations figurent en tête du rapport.</p>
+      <p class="sub">${RSAV ? 'Ces informations partent dans la fiche envoyée au technicien.' : 'Ces informations figurent en tête du rapport.'}</p>
       <div class="card"><h2>Client</h2>
         <div class="field"><label>Client</label>
           <input type="text" id="cliRecherche" autocomplete="off" value="${esc(R.client.nom || '')}"
@@ -2067,19 +2218,19 @@
         </div>
         <div class="grid2">${f('client.contact', 'Contact sur site (nom)', { ph: 'Ex. M. Rivière' })}${f('client.fonction', 'Fonction', { ph: 'Ex. Responsable maintenance' })}</div>
         <div class="grid2">${f('client.tel', 'Téléphone du client', { type: 'tel', ph: 'Ex. 04 78 55 44 33' })}${f('client.email', 'E-mail du client', { type: 'email', ph: 'Ex. contact@client.fr' })}</div>
-        <div style="display:flex;justify-content:flex-end;margin-top:-6px;margin-bottom:8px">
+        ${RSAV ? '' : `<div style="display:flex;justify-content:flex-end;margin-top:-6px;margin-bottom:8px">
           <button type="button" class="btn ghost sm" data-a="sms-arrivee" style="font-size:11.5px;padding:2px 8px;display:flex;align-items:center;gap:4px;color:#0284c7">
             ${(ICO.sms && ICO.sms(13)) || '💬'} Prévenir le contact par SMS
           </button>
-        </div>
+        </div>`}
         ${f('client.adresse', 'Adresse du client', { ph: 'Rue, code postal, ville' })}
         ${f('client.lieu', "Lieu d'intervention", { list: 'dlLieux', ph: "Ex. Atelier 2 — ligne 4" })}
-        <div class="filebtn" style="margin-top:8px"><input type="file" id="logoClient" accept="image/*">
+        ${RSAV ? '<p class="small">Le logo du client ne voyage pas dans la fiche : le technicien a celui de son annuaire.</p>' : `<div class="filebtn" style="margin-top:8px"><input type="file" id="logoClient" accept="image/*">
           <label for="logoClient">${(ICO.image && ICO.image(16)) || ''} ${R.client.logo ? 'Changer le logo du client' : 'Ajouter le logo du client (facultatif)'}</label></div>
         <div id="zoneApercuLogoClient">
           ${R.client.logo ? '<img src="' + R.client.logo + '" style="max-height:52px;margin-top:8px;background:#fff;border:1px solid var(--bord);border-radius:6px">'
                           : '<p class="small">Sans logo, la place reste vide dans le compte rendu.</p>'}
-        </div>
+        </div>`}
       </div>
       <div class="card" id="cardMachines">
         <h2>${(R.machines && R.machines.length > 1) ? 'Machines visitées' : 'Machine'}</h2>
@@ -2117,15 +2268,16 @@
             ${I18N.langues.map(l => `<option value="${l.code}" ${R.langue.code === l.code ? 'selected' : ''}>${l.nom} — ${l.natif}</option>`).join('')}
           </select>
         </div>
-        <div class="btnrow" id="langPretBloc" ${R.langue.active ? '' : 'hidden'}>
+        <div class="btnrow" id="langPretBloc" ${R.langue.active && !RSAV ? '' : 'hidden'}>
           <button class="btn grey" type="button" id="langPret">Préparer la langue sur ce téléphone</button>
         </div>
         <p class="small" id="langResume">${texteLangue(R)}</p>
-        <p class="small" id="langEtat">${texteEtatTraduction()}</p>
+        ${RSAV ? '' : `<p class="small" id="langEtat">${texteEtatTraduction()}</p>`}
       </div>
       <div class="card"><h2>Intervention</h2>
-        <div class="grid2">${f('numero', 'N° de rapport')}<div class="field"><label>Date</label><input type="date" data-fk="date" value="${esc(R.date)}"></div></div>
-        ${f('technicien', 'Technicien principal (signataire)', { ph: Report.nomComplet(S.technicien) })}
+        ${RSAV ? `<div class="field"><label>Date prévue</label><input type="date" data-fk="date" value="${esc(R.date)}"></div>`
+          : `<div class="grid2">${f('numero', 'N° de rapport')}<div class="field"><label>Date</label><input type="date" data-fk="date" value="${esc(R.date)}"></div></div>`}
+        ${RSAV ? '' : `${f('technicien', 'Technicien principal (signataire)', { ph: Report.nomComplet(S.technicien) })}
         ${Report.contactTech(S.technicien) ? '<p class="small">Vos coordonnées (' + esc(Report.contactTech(S.technicien)) + ') apparaissent dans les blocs de signature — modifiables dans Menu → Mes informations.</p>' : ''}
         <div id="listeColleguesForm" style="margin-top:12px">
           <label style="font-size:0.85rem;font-weight:600;color:var(--texte-doux,#475569);display:block;margin-bottom:6px">Collègue(s) / Technicien(s) sur site</label>
@@ -2143,7 +2295,7 @@
               </div>`).join('')}
           </div>
           <button type="button" class="btn sm grey" id="btnAjouterTechnicien">+ Ajouter un collègue sur site</button>
-        </div>
+        </div>`}
         <div class="field"><label>Type d'intervention</label>
           <select data-fk="typeIntervention">
             ${R.typeIntervention ? '' : '<option value="" selected>Non précisé (plan standard)</option>'}
@@ -2313,7 +2465,7 @@
         const choix = $('#langChoix', panneau);
         if (choix) choix.hidden = !R.langue.active;
         const blocPret = $('#langPretBloc', panneau);
-        if (blocPret) blocPret.hidden = !R.langue.active;
+        if (blocPret) blocPret.hidden = !R.langue.active || RSAV;
         const zoneEtat = $('#langEtat', panneau);
         const btn = $('#langPret', panneau);
         if (zoneEtat && (!btn || !btn.disabled)) zoneEtat.textContent = texteEtatTraduction();
@@ -2453,7 +2605,8 @@
       /* Un nom tapé à la main doit aussi être pris en compte tout de suite. */
       champ.addEventListener('change', () => { setPath(R, 'client.nom', champ.value.trim()); planifier(); rendreEntete(); });
 
-      $('#logoClient', panneau).addEventListener('change', async (ev) => {
+      const champLogo = $('#logoClient', panneau);
+      if (champLogo) champLogo.addEventListener('change', async (ev) => {
         if (!ev.target.files[0]) return;
         try {
           R.client.logo = await compresserImage(ev.target.files[0], 520, 0.92);
@@ -2506,8 +2659,8 @@
       </div>
       <div class="sig-client-corps">
         <div class="grid2">
-          <div class="field"><label>Nom du signataire</label><input id="sigNom" value="${esc(R.signatureClient.nom || R.client.contact || '')}"></div>
-          <div class="field"><label>Fonction</label><input id="sigFonction" value="${esc(R.signatureClient.fonction || R.client.fonction || '')}"></div>
+          <div class="field"><label>Nom du signataire</label><input type="text" id="sigNom" autocomplete="off" value="${esc(R.signatureClient.nom || R.client.contact || '')}"></div>
+          <div class="field"><label>Fonction</label><input type="text" id="sigFonction" autocomplete="off" value="${esc(R.signatureClient.fonction || R.client.fonction || '')}"></div>
         </div>
         <div class="agreement"><input type="checkbox" id="sigAccord">
           <label for="sigAccord">${esc(S.impression.mentionClient)}</label></div>
@@ -2533,7 +2686,7 @@
     overlay.addEventListener('click', (e) => {
       const b = e.target.closest('[data-a]');
       if (!b) return;
-      if (b.dataset.a === 'fermer') { overlay.remove(); }
+      if (b.dataset.a === 'fermer') { pad.detacher(); overlay.remove(); }
       else if (b.dataset.a === 'effacer') pad.clear();
       else if (b.dataset.a === 'horodater') toast('Horodatage : ' + new Date().toLocaleString('fr-FR'));
       else if (b.dataset.a === 'valider') {
@@ -2546,9 +2699,64 @@
         R.signatureClient.accord = $('#sigAccord', overlay).checked;
         R.statut = 'signé';
         if (!R.chrono.fin) { /* la signature peut précéder la fin du chrono */ }
-        overlay.remove(); planifier(); rendreTout();
+        pad.detacher(); overlay.remove(); planifier(); rendreTout();
         toast('Signature enregistrée');
       }
+    });
+  }
+
+  /* Émargement d'un participant à une formation : il signe du doigt sous la
+     mention « J'atteste avoir suivi la formation … ». Renvoie la signature
+     (JPEG léger) ou null si on annule. */
+  function signerParticipant(opts) {
+    opts = opts || {};
+    return new Promise(function (resolve) {
+      const overlay = document.createElement('div');
+      overlay.className = 'assistant sig-participant';
+      overlay.innerHTML = `
+        <div class="assistant-bar">
+          <button type="button" class="iconbtn" data-a="fermer">${(ICO.close && ICO.close(20)) || '✕'}</button>
+          <div class="assistant-titre">${esc(opts.titre || 'Émargement')}</div>
+          <button type="button" class="btn sm" data-a="valider">Valider</button>
+        </div>
+        <div class="sig-client-corps">
+          <div class="sig-participant-nom">${esc(opts.nom || '')}${opts.fonction ? `<small>${esc(opts.fonction)}</small>` : ''}</div>
+          <p class="sig-participant-mention">${esc(opts.mention || '')}</p>
+          <div class="sigwrap" style="background:#ffffff !important; background-color:#ffffff !important; color-scheme:light !important;">
+            <canvas id="sigPartCanvas" style="background:#ffffff !important; background-color:#ffffff !important; color-scheme:light !important; touch-action:none;"></canvas>
+            <div class="ph" id="sigPartPh" style="color:#64748b; font-weight:600;">${(ICO.signature && ICO.signature(18)) || ''} Le participant signe ici, du doigt</div>
+          </div>
+          <div class="btnrow" style="margin-top:8px">
+            <button class="btn grey" data-a="effacer">Effacer</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const canvas = $('#sigPartCanvas', overlay);
+      const pad = new Pad(canvas, (aEncre) => {
+        overlay.querySelector('#sigPartPh').style.display = aEncre ? 'none' : 'grid';
+        overlay.querySelector('.sigwrap').classList.toggle('signed', aEncre);
+      });
+      const finir = (resultat) => { pad.detacher(); overlay.remove(); resolve(resultat); };
+      overlay.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-a]');
+        if (!b) return;
+        if (b.dataset.a === 'fermer') finir(null);
+        else if (b.dataset.a === 'effacer') pad.clear();
+        else if (b.dataset.a === 'valider') {
+          if (!pad.hasInk) { toast('La signature est vide'); return; }
+          // signature réduite (600 px de large, JPEG) : une feuille d'émargement de
+          // vingt personnes reste légère dans le rapport et dans la sauvegarde
+          const src = canvas, w = Math.min(600, src.width), h = Math.max(1, Math.round(src.height * w / src.width));
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          const ctx = c.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(src, 0, 0, w, h);
+          finir(c.toDataURL('image/jpeg', 0.85));
+          toast('Signature enregistrée' + (opts.nom ? ' : ' + opts.nom : ''));
+        }
+      });
     });
   }
 
@@ -2562,7 +2770,9 @@
       this.couleurEncre = '#0f172a'; // Bleu-nuit / noir d'encre stylo très foncé et net
       this.ctx = canvas.getContext('2d');
       this.resize();
-      window.addEventListener('resize', () => this.resize(true));
+      // retiré à la fermeture (sinon chaque signature laissait un écouteur actif)
+      this.surResize = () => this.resize(true);
+      window.addEventListener('resize', this.surResize);
 
       canvas.addEventListener('pointerdown', (e) => this.down(e));
       canvas.addEventListener('pointermove', (e) => this.move(e));
@@ -2574,6 +2784,8 @@
       canvas.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
       canvas.addEventListener('touchmove', (e) => { e.preventDefault(); }, { passive: false });
     }
+
+    detacher() { window.removeEventListener('resize', this.surResize); }
 
     remplirFondBlanc() {
       if (!this.ctx) return;
@@ -3136,6 +3348,15 @@
       if (!Report.nomComplet(S.technicien)) { toast('Indiquez d\'abord votre nom : il figure sur le rapport', 3200); feuilleIdentite(true); return; }
       if (!R.client.nom) { toast('Renseignez d\'abord le client'); feuilleClient(); return; }
       if (!R.signatureClient.dataUrl && !(await Dialogue.confirmer('Le client n\'a pas signé. Soumettre quand même le rapport ?', { ok: 'Soumettre' }))) return;
+      // pièces préparées par le SAV sans choix : elles ne seraient pas sur le rapport
+      const sansChoix = (R.pieces || []).filter(p => p && p.prevue && !p.statut);
+      if (sansChoix.length && !(await Dialogue.confirmer(sansChoix.length + ' pièce(s) préparée(s) par le SAV sans choix « laissée sur site » ou « rapportée » ('
+        + sansChoix.map(p => p.denomination || p.reference).join(', ') + ') : elles ne figureront pas dans le rapport.\nSoumettre quand même ?', { ok: 'Soumettre' }))) return;
+      // formation incomplète : la preuve de formation serait partielle
+      const incompletes = Report.formationsDe(R).map(ev => Report.bilanFormation(ev)).filter(b => !b.complet);
+      if (incompletes.length && !(await Dialogue.confirmer(incompletes.map(b =>
+        'La formation « ' + (b.f.titre || 'Formation') + ' » est à compléter : ' + b.manques.join(', ') + '.').join('\n') +
+        '\nSoumettre quand même le rapport ?', { ok: 'Soumettre' }))) return;
       if (!R.chrono.fin && R.chrono.debut && !(await Dialogue.confirmer('Le chrono n\'est pas terminé. Continuer ?', { ok: 'Continuer' }))) return;
 
       const avecTrad = !!(R.langue && R.langue.active && R.langue.code);
@@ -3263,6 +3484,8 @@
 
         const b = e.target.closest('[data-a]:not([data-a="fermer"])');
         if (!b) return;
+        // le lien « repli direct » est traité ici : sans cela, il ouvrait aussi la messagerie par son href
+        if (b.tagName === 'A') e.preventDefault();
         const a = b.dataset.a;
         const fichiers = fichiersEnvoi(lots);
 
@@ -3361,7 +3584,9 @@
       <input type="${type || 'text'}" data-sk="${cle}" value="${esc(t[cle.split('.')[1]] || '')}" placeholder="${esc(ph || '')}"></div>`;
     const panneau = Ouvrir.ouvrir(null, `<div class="panel">
       <div class="grab"></div><h3>${premiereFois ? 'Bienvenue' : 'Mes informations'}</h3>
-      <p class="sub">${premiereFois
+      <p class="sub">${RSAV
+        ? 'Vos coordonnées figurent dans les fiches envoyées : le technicien sait qui l\'a préparée et comment vous joindre.'
+        : premiereFois
         ? 'Renseignez vos coordonnées une seule fois : elles sont conservées sur ce téléphone et reprises automatiquement dans tous vos rapports.'
         : 'Ces informations sont mémorisées sur ce téléphone et reprises automatiquement à chaque intervention.'}</p>
 
@@ -3436,7 +3661,9 @@
       (ev.photos || []).forEach((ph, j) => {
         if (!ph) return;
         out.push({ type: 'evenement', dataUrl: ph.dataUrl || '', numEv: k + 1, numPhoto: j + 1,
-          heure: ev.heure, domaine: etat.dom[ev.domaine] || ev.domaine || '', categorie: Report.estTravail(ev) ? 'Travail réalisé' : (etat.cat[ev.categorie] || ev.categorie || ''),
+          heure: ev.heure,
+          domaine: Report.estFormation(ev) ? Report.formationDe(ev).titre : (etat.dom[ev.domaine] || ev.domaine || ''),
+          categorie: Report.estFormation(ev) ? 'Formation' : Report.estTravail(ev) ? 'Travail réalisé' : (etat.cat[ev.categorie] || ev.categorie || ''),
           machine: ev.machineNom || '', texte: ev.texte || '', legende: ph.legende || '' });
       });
     });
@@ -3544,8 +3771,15 @@
       const pcPh = (rep.pieces || []).filter(p => p && p.photo).length;
       return acc + evPh + libPh + pcPh;
     }, 0);
+    /* L'annuaire fait partie de la sauvegarde : fiches complétées sur le terrain
+       (téléphones, e-mails, contacts ajoutés, logos) et liste clients importée. */
+    const annuaire = {
+      fiches: Clients.memo(),
+      liste: Clients.utiliseListeImportee() ? Clients.base() : null,
+      techniciens: Clients.listeTechniciens().map(t => ({ nom: t.nom }))
+    };
     const ok = await telecharger(
-      new Blob([JSON.stringify({ version: 3, exporte: new Date().toISOString(), reglages: S, rapport: R, rapports: listeExport }, null, 1)], { type: 'application/json' }),
+      new Blob([JSON.stringify({ version: 3, exporte: new Date().toISOString(), reglages: S, rapport: R, rapports: listeExport, annuaire: annuaire }, null, 1)], { type: 'application/json' }),
       'sauvegarde_rapports_' + todayISO() + '.json'
     );
     if (ok) {
@@ -3557,7 +3791,7 @@
 
   /* Réglages d'équipe : tout ce qui est commun aux techniciens (adresses d'envoi,
      société, mise en page…), sans les informations personnelles du technicien. */
-  const CLES_EQUIPE = ['societe', 'mail', 'impression', 'domaines', 'categories', 'canevas', 'numeroPrefixe'];
+  const CLES_EQUIPE = ['societe', 'mail', 'impression', 'domaines', 'categories', 'canevas', 'numeroPrefixe', 'lienApp'];
   function reglagesEquipe() {
     const out = { type: 'reglages-equipe-bfr', version: 1, exporte: new Date().toISOString() };
     CLES_EQUIPE.forEach(k => { if (S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
@@ -3589,7 +3823,18 @@
       <div class="grab"></div><h3>Réglages</h3>
       <p class="sub">À renseigner une fois par technicien. Ces informations n'apparaissent que dans vos rapports.</p>
 
-      <div class="card"><h2>Technicien</h2>
+      <div class="card" id="cardRole"><h2>Rôle sur cet appareil</h2>
+        <label class="role-choix"><input type="radio" name="role" value="technicien"${RSAV ? '' : ' checked'}>
+          <span><strong>Technicien</strong><small>Je réalise les interventions et j'envoie les rapports. Je reçois les fiches préparées par le SAV.</small></span></label>
+        <label class="role-choix"><input type="radio" name="role" value="rsav"${RSAV ? ' checked' : ''}>
+          <span><strong>Responsable SAV</strong><small>Je prépare les fiches d'intervention (client, machine, pièces à emporter, consignes) et je les envoie aux techniciens.</small></span></label>
+        ${RSAV ? `${f('lienApp', 'Adresse de l\'application (lien des fiches)', 'url', 'https://…github.io/BFR_Repport/')}
+          <p class="small">Adresse ouverte par les techniciens. Vide : ${Fiche.adresseApp() ? 'celle de cette page (' + esc(Fiche.adresseApp()) + ')' : 'à renseigner (cette page est un aperçu)'}.
+          Elle peut aussi arriver par le fichier « réglages d'équipe ».</p>` : ''}
+        <p class="small">Changer de rôle recharge l'application. Les rapports du technicien et les fiches du responsable SAV sont rangés à part : rien n'est perdu.</p>
+      </div>
+
+      <div class="card"><h2>${RSAV ? 'Responsable SAV' : 'Technicien'}</h2>
         <div class="recap">
           <div><span>Nom</span><strong>${esc(Report.nomComplet(S.technicien) || 'non renseigné')}</strong></div>
           <div><span>Fonction</span><strong>${esc(S.technicien.fonction || '—')}</strong></div>
@@ -3696,7 +3941,7 @@
       </div>
 
       <div class="card"><h2>Canevas du rapport (avancé)</h2>
-        <p class="small">Le canevas décrit l'ordre des sections du rapport. Types acceptés : <code>synthese</code>, <code>evenements</code> (avec <code>categories</code>), <code>texte</code> (avec <code>champ</code> : actions, aPrevoir, resumeTechnicien, objet), <code>pieces</code>, <code>photos</code>, <code>signature</code>.</p>
+        <p class="small">Le canevas décrit l'ordre des sections du rapport. Types acceptés : <code>synthese</code>, <code>evenements</code> (avec <code>categories</code>), <code>formation</code>, <code>texte</code> (avec <code>champ</code> : actions, aPrevoir, resumeTechnicien, objet), <code>pieces</code>, <code>photos</code>, <code>signature</code>.</p>
         <textarea id="setCanevas" rows="12" style="width:100%;font-family:ui-monospace,monospace;font-size:12px">${esc(JSON.stringify(S.canevas, null, 1))}</textarea>
       </div>
 
@@ -3721,11 +3966,33 @@
       <div class="btnrow"><button class="btn grey" data-a="fermer">Annuler</button>
         <button class="btn" data-a="enregistrer">Enregistrer</button></div></div>`, (panneau) => {
       const compresser = compresserImage;
+      /* Changement de rôle : enregistré tout de suite, puis l'application se recharge
+         (écran, menu et rangement des données changent). */
+      panneau.addEventListener('change', async (ev) => {
+        const radio = ev.target.closest('input[name="role"]');
+        if (!radio) return;
+        const vers = radio.value === 'rsav' ? 'rsav' : 'technicien';
+        if ((vers === 'rsav') === RSAV) return;
+        const question = vers === 'rsav'
+          ? 'Passer cet appareil en « Responsable SAV » ? Vous préparerez des fiches d\'intervention ; vos rapports de technicien restent conservés et reviennent si vous repassez en « Technicien ».'
+          : 'Passer cet appareil en « Technicien » ? Les fiches préparées restent conservées et reviennent si vous repassez en « Responsable SAV ».';
+        if (!(await Dialogue.confirmer(question, { ok: 'Changer de rôle' }))) {
+          $$('input[name="role"]', panneau).forEach(x => { x.checked = (x.value === 'rsav') === RSAV; });
+          return;
+        }
+        sauver(true);
+        S.role = vers;
+        // fonction affichée par défaut, si elle n'a pas été personnalisée
+        if (vers === 'rsav' && (!S.technicien.fonction || S.technicien.fonction === 'Technicien SAV')) S.technicien.fonction = 'Responsable SAV';
+        if (vers === 'technicien' && S.technicien.fonction === 'Responsable SAV') S.technicien.fonction = 'Technicien SAV';
+        Store.set(K.settings, S);
+        toast(vers === 'rsav' ? 'Mode Responsable SAV…' : 'Mode Technicien…', 1500);
+        setTimeout(() => location.reload(), 400);
+      });
       $('#logoInput', panneau).addEventListener('change', async (e) => {
         if (!e.target.files[0]) return;
         S.societe.logo = await compresser(e.target.files[0], 520, 0.92);
         Store.set(K.settings, S); toast('Logo enregistré'); rendreTout();
-        e.target.previousElementSibling; // rien
       });
       /* ---------- Liste clients : import / export / remise à zéro ---------- */
       $('#equipeImport', panneau).addEventListener('change', (ev) => {
@@ -3831,7 +4098,7 @@
         ['societe.lieuLettre', 'societe.piedPage',
          'societe.nom', 'societe.sigle', 'societe.sigleSuffixe', 'societe.adresse', 'societe.cpVille', 'societe.tel',
          'societe.email', 'societe.siteWeb', 'societe.siret', 'societe.tva',
-         'mail.destinataireSAV', 'mail.assistantSAV', 'mail.destinatairesCopie', 'mail.objet'
+         'mail.destinataireSAV', 'mail.assistantSAV', 'mail.destinatairesCopie', 'mail.objet', 'lienApp'
         ].forEach(k => { const el = $('[data-sk="' + k + '"]', panneau); if (el) setPath(S, k, el.value.trim()); });
         const saisieCorps = ($('#setCorps', panneau).value || '').trim();
         S.mail.corps = (saisieCorps === Report.defaultCorpsMail().trim()) ? '' : saisieCorps;
@@ -4418,13 +4685,522 @@
   }
 
   /* ===================== Menu ========================================= */
+  /* ===================== Fiche d'intervention : responsable SAV → technicien =====================
+     Le responsable SAV prépare la fiche (client, machine, type, objet, date prévue,
+     pièces à emporter, consignes) et l'envoie par e-mail. La fiche voyage dans le
+     lien lui-même, après le « # » : compressée, elle n'est déposée sur aucun
+     serveur (le site ne reçoit jamais cette partie de l'adresse). En touchant le
+     lien, le technicien ouvre l'application qui crée l'intervention pré-remplie. */
+  const Fiche = (function () {
+    const CLE_RECUES = 'sav3.fichesRecues';
+    function b64url(octets) {
+      let bin = '';
+      for (let k = 0; k < octets.length; k++) bin += String.fromCharCode(octets[k]);
+      return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    function deB64url(txt) {
+      const b = txt.replace(/-/g, '+').replace(/_/g, '/');
+      const bin = atob(b + '==='.slice((b.length + 3) % 4));
+      const o = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) o[k] = bin.charCodeAt(k);
+      return o;
+    }
+    /* Champs vides retirés : le lien reste court. */
+    function compacter(v) {
+      if (Array.isArray(v)) { const a = v.map(compacter).filter(x => x !== undefined); return a.length ? a : undefined; }
+      if (v && typeof v === 'object') {
+        const o = {};
+        Object.keys(v).forEach(k => { const x = compacter(v[k]); if (x !== undefined) o[k] = x; });
+        return Object.keys(o).length ? o : undefined;
+      }
+      if (v === '' || v === null || v === undefined) return undefined;
+      return typeof v === 'string' ? v.trim() || undefined : v;
+    }
+    async function encoder(fiche) {
+      const octets = new TextEncoder().encode(JSON.stringify(compacter(fiche)));
+      if (typeof CompressionStream === 'function') {
+        try {
+          const flux = new Blob([octets]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+          return 'z' + b64url(new Uint8Array(await new Response(flux).arrayBuffer()));
+        } catch (_) {}
+      }
+      return 'j' + b64url(octets);       // navigateur sans compression : lien plus long, même contenu
+    }
+    /* Le code d'une fiche dans un texte collé (lien entier, message, ou code seul). */
+    function codeDans(texte) {
+      const m = /fiche=([zj][A-Za-z0-9_-]{8,})/.exec(String(texte || ''));
+      if (m) return m[1];
+      const seul = String(texte || '').trim();
+      return /^[zj][A-Za-z0-9_-]{8,}$/.test(seul) ? seul : '';
+    }
+    async function decoder(texte, sansFlux) {
+      const code = codeDans(texte);
+      if (!code) throw new Error('code');
+      let octets = deB64url(code.slice(1));
+      if (code[0] === 'z') {
+        if (!sansFlux && typeof DecompressionStream === 'function') {
+          const flux = new Blob([octets]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+          octets = new Uint8Array(await new Response(flux).arrayBuffer());
+        } else {
+          octets = Clients._inflate(octets, octets.length * 6);
+        }
+      }
+      const f = JSON.parse(new TextDecoder().decode(octets));
+      if (!f || f.t !== 'fiche-bfr' || !f.id) throw new Error('format');
+      f.client = f.client || {};
+      f.machines = Array.isArray(f.machines) ? f.machines : [];
+      f.pieces = Array.isArray(f.pieces) ? f.pieces : [];
+      f.techniciens = Array.isArray(f.techniciens) ? f.techniciens : [];
+      f.par = f.par || {};
+      f.pour = f.pour || {};
+      return f;
+    }
+    /* Fiche à envoyer, tirée de la fiche en préparation. */
+    function depuis(r) {
+      const c = r.client || {}, e = r.envoi || {};
+      return {
+        t: 'fiche-bfr', v: 1, id: r.id, cree: new Date().toISOString(),
+        par: { nom: Report.nomComplet(S.technicien), fonction: S.technicien.fonction, tel: S.technicien.tel, email: S.technicien.email },
+        pour: { nom: e.nom, email: e.email },
+        techniciens: String(e.autres || '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean),
+        date: r.date, type: r.typeIntervention, objet: r.objet, consignes: e.consignes,
+        client: { nom: c.nom, reference: c.reference, numeroClient: c.numeroClient, contact: c.contact, fonction: c.fonction,
+          tel: c.tel, email: c.email, adresse: c.adresse, lieu: c.lieu },
+        langue: r.langue && r.langue.active ? r.langue.code : '',
+        machines: (r.machines || []).filter(m => m && (m.designation || m.modele || m.serie))
+          .map(m => ({ designation: m.designation, modele: m.modele, serie: m.serie })),
+        pieces: (r.pieces || []).filter(p => p && (p.denomination || p.reference))
+          .map(p => ({ denomination: p.denomination, reference: p.reference, quantite: parseInt(p.quantite, 10) || 1,
+            machineSerie: p.machineSerie, machineNom: p.machineNom }))
+      };
+    }
+    /* Adresse de l'application dans le lien : celle des réglages (fichier d'équipe),
+       sinon celle de cette page (pas dans un aperçu, dont l'adresse n'est pas partageable). */
+    function adresseApp() {
+      const saisie = String(S.lienApp || '').trim();
+      if (saisie) return saisie.split('#')[0];
+      if (dansUnCadre() || !/^https?:$/.test(location.protocol)) return '';
+      return location.origin + location.pathname;
+    }
+    function recues() { return Store.get(CLE_RECUES, []).filter(x => x && x.fiche && x.fiche.id); }
+    /* vue : déjà représentée après un rechargement (on ne la remontre plus d'office). */
+    function garder(f, vue) {
+      const avant = recues().find(x => x.fiche.id === f.id);
+      const l = recues().filter(x => x.fiche.id !== f.id);
+      l.unshift({ fiche: f, recueLe: (vue && avant) ? avant.recueLe : new Date().toISOString(), vue: !!vue });
+      Store.set(CLE_RECUES, l.slice(0, 20));
+    }
+    function oublier(id) { Store.set(CLE_RECUES, recues().filter(x => x.fiche.id !== id)); }
+    /* Intervention déjà créée depuis cette fiche (en cours ou dans l'historique). */
+    function dejaCreee(id) {
+      if (R && R.fiche && R.fiche.id === id) return R;
+      return Store.get(K.rapports, []).find(r => r && r.fiche && r.fiche.id === id) || null;
+    }
+    return { encoder: encoder, decoder: decoder, codeDans: codeDans, depuis: depuis, adresseApp: adresseApp,
+      recues: recues, garder: garder, oublier: oublier, dejaCreee: dejaCreee };
+  })();
+
+  /* ---------- Responsable SAV : écran de préparation ---------- */
+  function manquesFiche() {
+    const m = [];
+    if (!(R.client && R.client.nom)) m.push('le client');
+    if (!(R.machines || []).some(x => x && (x.designation || x.serie))) m.push('la machine');
+    if (!(R.envoi && R.envoi.email)) m.push('l\'e-mail du technicien');
+    return m;
+  }
+  async function lienFiche() {
+    const base = Fiche.adresseApp();
+    if (!base) return '';
+    return base + '#fiche=' + (await Fiche.encoder(Fiche.depuis(R)));
+  }
+  function messageFiche(f, lien) {
+    const c = f.client || {};
+    const prenom = String((f.pour && f.pour.nom) || '').trim().split(/\s+/)[0];
+    const l = ['Bonjour' + (prenom ? ' ' + prenom : '') + ',', '',
+      'Voici la fiche de l\'intervention' + (f.date ? ' prévue le ' + Report.frDate(f.date) : '') + ' :'];
+    l.push('Client : ' + (c.nom || '—') + (c.lieu ? ' — ' + c.lieu : ''));
+    if (c.adresse) l.push('Adresse : ' + c.adresse);
+    if (c.contact) l.push('Contact : ' + c.contact + (c.fonction ? ' (' + c.fonction + ')' : '') + (c.tel ? ' — ' + c.tel : ''));
+    (f.machines || []).forEach(m => l.push('Machine : ' + [m.designation, m.modele].filter(Boolean).join(' ') + (m.serie ? ' (N° ' + m.serie + ')' : '')));
+    if (f.type && Report.TYPES_INTERVENTION[f.type]) l.push('Type : ' + Report.TYPES_INTERVENTION[f.type].libelle);
+    if (f.objet) l.push('Objet : ' + f.objet);
+    if ((f.techniciens || []).length) l.push('Avec : ' + f.techniciens.join(', '));
+    if ((f.pieces || []).length) {
+      l.push('', 'Pièces à emporter :');
+      f.pieces.forEach(p => l.push('- ' + (p.quantite || 1) + ' × ' + (p.denomination || '') + (p.reference ? ' (réf. ' + p.reference + ')' : '')));
+    }
+    if (f.consignes) l.push('', 'Consignes :', f.consignes);
+    l.push('', 'Touchez ce lien : l\'application crée l\'intervention avec toutes ces informations.', lien, '',
+      'iPhone, application installée sur l\'écran d\'accueil : copiez le lien, puis dans l\'application, Menu → Recevoir une fiche.');
+    const sig = [f.par && f.par.nom, f.par && f.par.fonction, f.par && f.par.tel].filter(Boolean);
+    if (sig.length) l.push('', sig.join(' — '));
+    return l.join('\n');
+  }
+  function ecrirePressePapier(txt) {
+    try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(() => true, () => false); } catch (_) {}
+    return Promise.resolve(false);
+  }
+  /* mode : 'mail' (messagerie), 'lien' (copier le lien), 'message' (copier le message),
+     'partager' (feuille de partage du téléphone ou de Windows). */
+  async function envoyerFiche(mode) {
+    synchroniserEntites();
+    const manque = manquesFiche().filter(x => mode === 'mail' || x !== 'l\'e-mail du technicien');
+    if (manque.length) { toast('À renseigner avant l\'envoi : ' + manque.join(', '), 3500); return; }
+    if (!Report.nomComplet(S.technicien)) { toast('Indiquez d\'abord votre nom : il figure dans la fiche', 3200); feuilleIdentite(true); return; }
+    const lien = await lienFiche();
+    if (!lien) {
+      toast('Indiquez l\'adresse de l\'application dans Réglages → Rôle (lien des fiches)', 4500);
+      feuilleReglages();
+      return;
+    }
+    const f = Fiche.depuis(R);
+    const objet = 'Fiche d\'intervention — ' + (f.client.nom || '') + (f.date ? ' — ' + Report.frDate(f.date) : '');
+    const message = messageFiche(f, lien);
+    const champ = $('#ficheLien');
+    if (champ) { champ.value = lien; champ.closest('.fiche-lien').hidden = false; }
+    if (mode === 'lien' || mode === 'message') {
+      const ok = await ecrirePressePapier(mode === 'lien' ? lien : message);
+      toast(ok ? (mode === 'lien' ? 'Lien de la fiche copié' : 'Message copié : collez-le dans votre messagerie')
+               : 'Copie impossible : sélectionnez le lien affiché', 3200);
+      return;
+    }
+    if (mode === 'partager' && navigator.share) {
+      try { await navigator.share({ title: objet, text: message }); } catch (_) { return; }
+    } else {
+      const copie = await ecrirePressePapier(message);   // si la messagerie coupe un long message, il reste à coller
+      if (dansUnCadre()) {
+        // aperçu (artefact) : la messagerie ne s'ouvre pas d'ici
+        toast(copie ? 'Message copié : collez-le dans un e-mail à ' + R.envoi.email.trim() : 'Copiez le lien affiché et envoyez-le par e-mail', 5000);
+      } else {
+        window.location.href = urlMailto({ to: [R.envoi.email.trim()], cc: [] }, objet, message);
+      }
+    }
+    retenirDestinataire(String(R.envoi.nom || '').trim(), String(R.envoi.email || '').trim());
+    R.envoi.envoyeeLe = new Date().toISOString();
+    R.statut = 'envoyée';
+    sauver(true);
+    rendreTout();
+    toast('Fiche envoyée à ' + (R.envoi.nom || R.envoi.email), 3000);
+  }
+
+  /* Destinataires déjà utilisés : nom et e-mail proposés d'un toucher. */
+  function destinatairesFiches() { return Store.get('sav3.destinatairesFiches', []).filter(x => x && x.nom); }
+  function retenirDestinataire(nom, email) {
+    if (!nom || !email) return;
+    const l = destinatairesFiches().filter(x => x.nom.toLowerCase() !== nom.toLowerCase());
+    l.unshift({ nom: nom, email: email });
+    Store.set('sav3.destinatairesFiches', l.slice(0, 12));
+  }
+
+  /* Ce qui manque à la fiche, mis à jour pendant la saisie (sans redessiner l'écran). */
+  function majManqueFiche() {
+    const el = $('#ficheManque');
+    if (!el) return;
+    const m = manquesFiche();
+    el.hidden = !m.length;
+    el.innerHTML = 'À renseigner : <strong>' + esc(m.join(', ')) + '</strong>';
+  }
+
+  function rendreFicheRSAV() {
+    const zone = $('#zoneEvenements');
+    const zc = $('#zoneCloture');
+    if (zc) zc.innerHTML = '';
+    if (!zone) return;
+    const e = R.envoi || (R.envoi = { nom: '', email: '', autres: '', consignes: '', envoyeeLe: '' });
+    const pcs = R.pieces || [];
+    const connus = destinatairesFiches();
+    const manque = manquesFiche();
+    const adresse = Fiche.adresseApp();
+    zone.innerHTML = `
+      <div class="card" id="cardPieces">
+        <h2>Pièces à emporter ${pcs.length ? `<span class="pill">${pcs.length} pièce${pcs.length > 1 ? 's' : ''}</span>` : ''}</h2>
+        <p class="hint">Le technicien les retrouve dans son intervention et indique sur place si chacune reste chez le client
+          ou revient : seules les pièces laissées sur site figurent dans son rapport.</p>
+        ${rendreTableauPieces()}
+        <button type="button" class="btn sm grey" data-a="ajouter-piece" style="margin-top:8px">${(ICO.plus && ICO.plus(14)) || '+'} Ajouter une pièce à emporter</button>
+      </div>
+
+      <div class="card">
+        <h2>Technicien</h2>
+        ${connus.length ? `<div class="fm-puces petites" style="margin-bottom:10px">${connus.slice(0, 8).map((d, k) =>
+          `<button type="button" class="fm-puce${d.nom === e.nom ? ' on' : ''}" data-a="fiche-destinataire" data-k="${k}">${esc(d.nom)}</button>`).join('')}</div>` : ''}
+        <div class="grid2">
+          <div class="field"><label>Technicien destinataire</label>
+            <input type="text" data-k="envoi.nom" value="${esc(e.nom)}" placeholder="Ex. Romuald TORRES" autocomplete="off"></div>
+          <div class="field"><label>Son e-mail</label>
+            <input type="email" data-k="envoi.email" value="${esc(e.email)}" placeholder="prenom.nom@…" autocomplete="off"></div>
+        </div>
+        <div class="field"><label>Autres techniciens prévus (facultatif)</label>
+          <input type="text" data-k="envoi.autres" value="${esc(e.autres)}" placeholder="Ex. Thomas BERNARD, Julie MARTIN" autocomplete="off"></div>
+        <div class="field"><label>Consignes pour le technicien</label>
+          <textarea data-k="envoi.consignes" rows="4" placeholder="Ex. Accès par le quai 3, badge à l'accueil. EPI : chaussures de sécurité, charlotte. Appeler M. Rivière en arrivant.">${esc(e.consignes)}</textarea></div>
+      </div>
+
+      <div class="card">
+        <h2>Envoyer la fiche ${e.envoyeeLe ? '<span class="pill" style="background:#dcfce7;color:#166534">envoyée</span>' : ''}</h2>
+        <p class="hint">Le technicien reçoit un e-mail avec un lien : en le touchant, son application crée l'intervention
+          avec toutes ces informations. La fiche voyage dans le lien lui-même : elle n'est déposée sur aucun serveur.</p>
+        <div class="sticky-note" id="ficheManque" style="margin-bottom:10px"${manque.length ? '' : ' hidden'}>À renseigner : <strong>${esc(manque.join(', '))}</strong></div>
+        ${adresse ? '' : `<div class="sticky-note" style="margin-bottom:10px;border-color:#f59e0b;background:#fffbeb">
+            Adresse de l'application à indiquer dans <strong>Réglages → Rôle</strong> (par exemple l'adresse GitHub Pages de l'appli) :
+            sans elle, le lien ne peut pas être fabriqué.</div>`}
+        <button class="btn or wide" data-a="fiche-envoyer">${(ICO.mail && ICO.mail(18)) || ''} Envoyer par e-mail</button>
+        <div class="btnrow" style="margin-top:8px">
+          <button class="btn ghost" data-a="fiche-copier-lien">${(ICO.copy && ICO.copy(16)) || ''} Copier le lien</button>
+          <button class="btn ghost" data-a="fiche-copier-message">${(ICO.copy && ICO.copy(16)) || ''} Copier le message</button>
+          ${navigator.share ? `<button class="btn ghost" data-a="fiche-partager">${(ICO.send && ICO.send(16)) || ''} Partager</button>` : ''}
+        </div>
+        <div class="field fiche-lien" hidden style="margin-top:10px"><label>Lien de la fiche</label>
+          <input type="text" id="ficheLien" readonly></div>
+        ${e.envoyeeLe ? `<p class="small" style="margin-top:8px">Envoyée le ${esc(Report.frDate(e.envoyeeLe.slice(0, 10)))} à ${esc(Report.heureFr(e.envoyeeLe))}
+          à <strong>${esc(e.nom || e.email)}</strong>. Une modification ? Renvoyez simplement la fiche.</p>` : ''}
+        <button class="btn grey wide" style="margin-top:10px" data-a="fiche-nouvelle">${(ICO.plus && ICO.plus(16)) || ''} Préparer une nouvelle fiche</button>
+      </div>`;
+  }
+
+  function nouvelleFiche(sansQuestion) {
+    const faire = () => {
+      sauver(true);
+      R = nouvelleIntervention();
+      R.typeIntervention = 'sav';
+      Store.set(K.rapport, R);
+      rendreTout();
+      window.scrollTo(0, 0);
+      toast('Nouvelle fiche d\'intervention');
+    };
+    if (sansQuestion || rapportVierge(R)) { faire(); return; }
+    Dialogue.confirmer('Préparer une nouvelle fiche ? La fiche en cours reste dans « Fiches préparées ».', { ok: 'Nouvelle fiche' })
+      .then(oui => { if (oui) faire(); });
+  }
+
+  function feuilleFichesPreparees() {
+    const liste = Store.get(K.rapports, []).filter(r => r && r.id);
+    const carte = (r) => {
+      const ms = (r.machines || []).filter(m => m && (m.designation || m.serie));
+      const env = r.envoi || {};
+      return `<div class="menu-item" style="flex-direction:column;align-items:stretch;gap:6px">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <strong>${esc((r.client && r.client.nom) || 'client ?')}</strong>
+          <span class="pill">${env.envoyeeLe ? 'envoyée' : 'brouillon'}</span></div>
+        <div class="small">${r.date ? 'Prévue le ' + esc(Report.frDate(r.date)) : 'Date non fixée'}${ms.length ? ' • ' + esc(ms.map(m => m.designation || m.serie).join(', ')) : ''}
+          ${env.nom ? ' • pour ' + esc(env.nom) : ''}${(r.pieces || []).length ? ' • ' + r.pieces.length + ' pièce(s)' : ''}${r.id === R.id ? ' • <strong>en cours</strong>' : ''}</div>
+        <div class="btnrow"><button class="btn sm grey" data-ouvrir="${esc(r.id)}">Rouvrir</button>
+          <button class="btn sm danger" data-suppr="${esc(r.id)}">Supprimer</button></div></div>`;
+    };
+    Ouvrir.ouvrir(null, `<div class="panel">
+      <div class="grab"></div><h3>Fiches préparées</h3>
+      <p class="sub">${liste.length} fiche(s) sur cet appareil. Rouvrir une fiche permet de la modifier et de la renvoyer.</p>
+      <div id="fichesListe">${liste.map(carte).join('') || '<p class="small">Aucune fiche préparée.</p>'}</div>
+      <button class="btn grey wide" data-a="fermer">Fermer</button></div>`, (panneau) => {
+      panneau.addEventListener('click', async (ev) => {
+        const ouv = ev.target.closest('[data-ouvrir]'), sup = ev.target.closest('[data-suppr]');
+        if (ouv) {
+          const r = Store.get(K.rapports, []).find(x => x && x.id === ouv.dataset.ouvrir);
+          if (!r) return;
+          sauver(true);
+          R = fusion(nouvelleIntervention(), r);
+          Store.set(K.rapport, R);
+          panneau.closest('.sheet').remove();
+          rendreTout();
+          toast('Fiche rouverte');
+        } else if (sup) {
+          const id = sup.dataset.suppr;
+          if (id === R.id) { toast('C\'est la fiche en cours : préparez d\'abord une nouvelle fiche', 3500); return; }
+          if (!(await Dialogue.confirmer('Supprimer cette fiche préparée ?', { ok: 'Supprimer', danger: true }))) return;
+          Store.set(K.rapports, Store.get(K.rapports, []).filter(x => x && x.id !== id));
+          panneau.closest('.sheet').remove();
+          feuilleFichesPreparees();
+        }
+      });
+    });
+  }
+
+  /* ---------- Technicien : réception d'une fiche ---------- */
+  function estIPhoneNavigateur() {
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    let installe = navigator.standalone === true;
+    try { installe = installe || window.matchMedia('(display-mode: standalone)').matches; } catch (_) {}
+    return ios && !installe;
+  }
+
+  /* Lien ouvert (#fiche=…) : la fiche est mise de côté (elle survit à un rechargement),
+     l'adresse est nettoyée, puis la fiche est présentée au technicien. */
+  async function recevoirFicheDepuisAdresse() {
+    const code = Fiche.codeDans(location.hash);
+    if (!code) {
+      /* Fiche reçue il y a moins de 2 minutes : l'application a pu se recharger juste
+         après l'ouverture du lien (installation ou mise à jour) ; on la représente. */
+      const recente = !RSAV && Fiche.recues().find(x => Date.now() - new Date(x.recueLe).getTime() < 120000 && !x.vue);
+      if (recente && !document.querySelector('.sheet, .assistant')) {
+        Fiche.garder(Object.assign({}, recente.fiche), true);
+        feuilleFicheRecue(recente.fiche);
+      }
+      return;
+    }
+    let f = null;
+    try { f = await Fiche.decoder(code); } catch (e) { f = null; }
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+    if (!f) { toast('Lien de fiche illisible : demandez au responsable SAV de le renvoyer', 4500); return; }
+    if (!Fiche.dejaCreee(f.id)) Fiche.garder(f);
+    if (RSAV) {
+      toast('Cet appareil est réglé en « Responsable SAV » : passez en « Technicien » (Réglages) pour ouvrir la fiche.', 5000);
+      return;
+    }
+    rendreTout();
+    feuilleFicheRecue(f);
+  }
+
+  function blocFichesRecues() {
+    if (RSAV) return '';
+    const l = Fiche.recues();
+    if (!l.length) return '';
+    return l.map(x => {
+      const f = x.fiche, ms = (f.machines || []).map(m => m.designation || m.serie).filter(Boolean);
+      return `<div class="card fiche-recue-carte">
+        <div class="fiche-recue-tete">${(ICO.mail && ICO.mail(18)) || '📨'} <strong>Fiche d'intervention reçue</strong></div>
+        <p class="small" style="margin:4px 0 8px">${esc(f.client.nom || 'Client')}${ms.length ? ' — ' + esc(ms.join(', ')) : ''}${f.date ? ' — prévue le ' + esc(Report.frDate(f.date)) : ''}
+          ${f.par && f.par.nom ? '<br>Préparée par ' + esc(f.par.nom) : ''}</p>
+        <div class="btnrow"><button class="btn sm or" data-a="fiche-voir" data-id="${esc(f.id)}">Voir et créer l'intervention</button>
+          <button class="btn sm grey" data-a="fiche-ignorer" data-id="${esc(f.id)}">Ignorer</button></div>
+      </div>`;
+    }).join('');
+  }
+
+  function feuilleFicheRecue(f) {
+    const c = f.client || {};
+    const deja = Fiche.dejaCreee(f.id);
+    const type = Report.TYPES_INTERVENTION[f.type];
+    const ligne = (lib, val) => val ? `<div><span>${esc(lib)}</span><strong>${esc(val)}</strong></div>` : '';
+    Ouvrir.ouvrir(null, `<div class="panel">
+      <div class="grab"></div><h3>Fiche d'intervention reçue</h3>
+      <p class="sub">${f.par && f.par.nom ? 'Préparée par ' + esc(f.par.nom) + (f.par.fonction ? ' (' + esc(f.par.fonction) + ')' : '') : 'Préparée par le SAV'}${f.cree ? ' le ' + esc(Report.frDate(f.cree.slice(0, 10))) + ' à ' + esc(Report.heureFr(f.cree)) : ''}</p>
+      ${deja ? `<div class="sticky-note" style="margin-bottom:10px;border-color:#f59e0b;background:#fffbeb">Cette fiche a déjà servi à créer
+        l'intervention <strong>N° ${esc(deja.numero || '—')}</strong>${deja.id === R.id ? ' (celle en cours)' : ' (Menu → Rapports enregistrés)'}.</div>` : ''}
+      <div class="card"><div class="recap">
+        ${ligne('Client', c.nom)}${ligne('Lieu', c.lieu)}${ligne('Adresse', c.adresse)}
+        ${ligne('Contact', [c.contact, c.fonction ? '(' + c.fonction + ')' : '', c.tel].filter(Boolean).join(' '))}
+        ${(f.machines || []).map(m => ligne('Machine', [m.designation, m.modele].filter(Boolean).join(' ') + (m.serie ? ' — N° ' + m.serie : ''))).join('')}
+        ${ligne('Date prévue', f.date ? Report.frDate(f.date) : '')}${ligne('Type', type ? type.libelle : '')}${ligne('Objet', f.objet)}
+        ${ligne('Avec', (f.techniciens || []).join(', '))}
+        ${ligne('Langue du rapport', f.langue && typeof I18N !== 'undefined' ? 'français + ' + I18N.natif(f.langue) : '')}
+      </div></div>
+      ${(f.pieces || []).length ? `<div class="card"><h2>Pièces à emporter</h2>
+        <ul class="fiche-pieces">${f.pieces.map(p => `<li><strong>${esc(p.quantite || 1)} ×</strong> ${esc(p.denomination || '')}${p.reference ? ' <span class="small">réf. ' + esc(p.reference) + '</span>' : ''}</li>`).join('')}</ul></div>` : ''}
+      ${f.consignes ? `<div class="sticky-note fiche-consignes"><strong>Consignes</strong><br>${esc(f.consignes).replace(/\n/g, '<br>')}</div>` : ''}
+      ${estIPhoneNavigateur() ? `<div class="sticky-note" style="margin-top:10px">Vous utilisez l'application installée sur l'écran d'accueil ?
+        Copiez la fiche, puis dans l'application : <strong>Menu → Recevoir une fiche</strong>.
+        <div class="btnrow" style="margin-top:8px"><button class="btn sm grey" data-a="fiche-copier">Copier la fiche</button></div></div>` : ''}
+      <div class="btnrow" style="margin-top:12px">
+        <button class="btn grey" data-a="fermer">Plus tard</button>
+        <button class="btn or" data-a="fiche-creer">${deja ? 'Créer une autre intervention' : 'Créer l\'intervention'}</button>
+      </div></div>`, (panneau) => {
+      panneau.addEventListener('click', async (ev) => {
+        if (ev.target.closest('[data-a="fiche-copier"]')) {
+          const code = await Fiche.encoder(f);
+          const ok = await ecrirePressePapier((Fiche.adresseApp() || '') + '#fiche=' + code);
+          toast(ok ? 'Fiche copiée : collez-la dans l\'application (Menu → Recevoir une fiche)' : 'Copie impossible', 4000);
+          return;
+        }
+        if (!ev.target.closest('[data-a="fiche-creer"]')) return;
+        panneau.closest('.sheet').remove();
+        await creerDepuisFiche(f);
+      });
+    });
+  }
+
+  /* Nouvelle intervention pré-remplie avec la fiche ; l'intervention en cours est
+     conservée dans l'historique. */
+  async function creerDepuisFiche(f) {
+    if (!rapportVierge(R)) {
+      const enCours = R.chrono && R.chrono.debut && !R.chrono.fin;
+      const q = enCours
+        ? 'L\'intervention N° ' + (R.numero || '—') + ' est en cours. Elle sera conservée dans l\'historique. Créer l\'intervention de la fiche ?'
+        : 'L\'intervention N° ' + (R.numero || '—') + ' reste dans l\'historique. Créer l\'intervention de la fiche ?';
+      if (!(await Dialogue.confirmer(q, { ok: 'Créer' }))) return;
+      sauver(true);
+    }
+    const c = f.client || {};
+    const r = nouvelleIntervention();
+    r.numeroAuto = true;
+    r.typeIntervention = Report.TYPES_INTERVENTION[f.type] ? f.type : 'sav';
+    r.date = (f.date && f.date >= todayISO()) ? f.date : todayISO();
+    r.objet = f.objet || '';
+    ['nom', 'reference', 'numeroClient', 'contact', 'fonction', 'tel', 'email', 'adresse', 'lieu'].forEach(k => { r.client[k] = c[k] || ''; });
+    // logo et langue du client : ceux de l'annuaire de ce téléphone
+    const local = (c.nom && Clients.parNom) ? Clients.parNom(c.nom, c.contact) : null;
+    if (local && local.logo) r.client.logo = local.logo;
+    if (local && local.langue) r.client.langue = local.langue;
+    if (f.langue) { r.langue = { active: true, code: f.langue }; r.client.langue = f.langue; }
+    const ms = (f.machines || []).filter(m => m && (m.designation || m.modele || m.serie));
+    if (ms.length) r.machines = ms.map(m => ({ id: uid('m'), designation: m.designation || '', modele: m.modele || '', serie: m.serie || '' }));
+    r.machine.designation = r.machines[0].designation; r.machine.modele = r.machines[0].modele; r.machine.serie = r.machines[0].serie;
+    const moi = String(Report.nomComplet(S.technicien) || '').toLowerCase();
+    (f.techniciens || []).filter(n => n && n.toLowerCase() !== moi)
+      .forEach(n => r.techniciens.push({ id: uid('t'), nom: n, fonction: 'Technicien SAV', principal: false }));
+    r.pieces = (f.pieces || []).map(p => {
+      const m = r.machines.find(x => p.machineSerie && x.serie === p.machineSerie) ||
+        r.machines.find(x => p.machineNom && (x.designation === p.machineNom || x.modele === p.machineNom));
+      const q = parseInt(p.quantite, 10) || 1;
+      return { id: uid('p'), denomination: p.denomination || '', reference: p.reference || '', quantite: q, quantitePrevue: q,
+        photo: null, machineId: m ? m.id : '', machineSerie: p.machineSerie || '', machineNom: p.machineNom || '',
+        prevue: true, statut: '' };
+    });
+    r.fiche = { id: f.id, par: f.par || {}, cree: f.cree || '', consignes: f.consignes || '', datePrevue: f.date || '',
+      recueLe: new Date().toISOString() };
+    R = r;
+    Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
+    Store.set(K.rapport, R);
+    Fiche.oublier(f.id);
+    sauver(true);
+    rendreTout();
+    window.scrollTo(0, 0);
+    toast('Intervention créée depuis la fiche — N° ' + R.numero, 3500);
+    if (!Report.nomComplet(S.technicien)) setTimeout(() => feuilleIdentite(true), 600);
+  }
+
+  /* Menu → Recevoir une fiche : coller le lien reçu (iPhone, application installée). */
+  function feuilleCollerFiche() {
+    Ouvrir.ouvrir(null, `<div class="panel">
+      <div class="grab"></div><h3>Recevoir une fiche</h3>
+      <p class="sub">Collez le lien de la fiche reçu par e-mail (ou le message entier).</p>
+      <div class="field"><textarea id="ficheColle" rows="4" placeholder="https://…#fiche=…"></textarea></div>
+      <div class="btnrow">
+        ${navigator.clipboard && navigator.clipboard.readText ? '<button class="btn grey" data-a="fiche-coller">Coller</button>' : ''}
+        <button class="btn or" data-a="fiche-lire">Ouvrir la fiche</button></div>
+      <button class="btn grey wide" style="margin-top:10px" data-a="fermer">Fermer</button></div>`, (panneau) => {
+      panneau.addEventListener('click', async (ev) => {
+        const champ = $('#ficheColle', panneau);
+        if (ev.target.closest('[data-a="fiche-coller"]')) {
+          try { champ.value = await navigator.clipboard.readText(); } catch (_) { toast('Collez le lien à la main (appui long dans le champ)'); }
+          return;
+        }
+        if (!ev.target.closest('[data-a="fiche-lire"]')) return;
+        let f = null;
+        try { f = await Fiche.decoder(champ.value); } catch (_) { f = null; }
+        if (!f) { toast('Aucune fiche lisible dans ce texte : vérifiez que le lien est complet', 4000); return; }
+        if (!Fiche.dejaCreee(f.id)) Fiche.garder(f);
+        rendreTout();
+        feuilleFicheRecue(f);
+      });
+    });
+  }
+
   function feuilleMenu() {
     const liste = Store.get(K.rapports, []);
     const ver = (typeof window !== 'undefined' && window.SAV_VERSION) || 'locale';
     const dateVer = (typeof window !== 'undefined' && window.SAV_DATE) || '25/09/2026';
     Ouvrir.ouvrir(null, `<div class="panel">
       <div class="grab"></div><h3>Menu</h3>
-      <p class="sub">Rapport N° ${esc(R.numero || '—')} — ${esc(R.client.nom || 'client non renseigné')}</p>
+      <p class="sub">${RSAV ? 'Responsable SAV — fiche' : 'Rapport N° ' + esc(R.numero || '—')} — ${esc(R.client.nom || 'client non renseigné')}</p>
+      ${RSAV ? `
+      <button class="menu-item" data-a="nouveau"><span class="ico">${(ICO.plus && ICO.plus(18)) || ''}</span><span>Nouvelle fiche d'intervention<small>La fiche en cours reste dans les fiches préparées</small></span></button>
+      <button class="menu-item" data-a="historique"><span class="ico">${(ICO.folder && ICO.folder(18)) || ''}</span><span>Fiches préparées (${liste.length})<small>Rouvrir, modifier, renvoyer</small></span></button>
+      <button class="menu-item" data-a="identite"><span class="ico">${(ICO.user && ICO.user(18)) || ''}</span><span>Mes informations<small>${esc(Report.nomComplet(S.technicien) || 'nom, téléphone, e-mail à renseigner')}</small></span></button>
+      <button class="menu-item" data-a="annuaire"><span class="ico">${(ICO.users && ICO.users(18)) || ''}</span><span>Annuaire clients<small>Consulter, modifier ou ajouter un client</small></span></button>
+      <button class="menu-item" data-a="reglages"><span class="ico">${(ICO.gear && ICO.gear(18)) || ''}</span><span>Réglages<small>Rôle, adresse de l'application, société</small></span></button>
+      <button class="menu-item" data-a="actualiser"><span class="ico">${(ICO.clock && ICO.clock(18)) || ''}</span><span>Actualiser l'application<small>Vider le cache et forcer la dernière version</small></span></button>
+      <button class="menu-item" data-a="aide"><span class="ico">${(ICO.help && ICO.help(18)) || ''}</span><span>Mode d'emploi</span></button>
+      ` : `
       <button class="menu-item" data-a="signer"><span class="ico">${(ICO.signature && ICO.signature(18)) || ''}</span><span>Faire signer le client<small>${R.signatureClient && R.signatureClient.dataUrl ? 'Signé par ' + esc(R.signatureClient.nom || 'le client') : 'Signature tactile sur écran'}</small></span></button>
       <button class="menu-item" data-a="soumettre"><span class="ico">${(ICO.send && ICO.send(18)) || ''}</span><span>Soumettre le rapport<small>Transmission PDF par e-mail</small></span></button>
       <button class="menu-item" data-a="identite"><span class="ico">${(ICO.user && ICO.user(18)) || ''}</span><span>Mes informations<small>${esc(Report.nomComplet(S.technicien) || 'nom, téléphone, e-mail à renseigner')}</small></span></button>
@@ -4437,9 +5213,11 @@
       <button class="menu-item" data-a="historique"><span class="ico">${(ICO.folder && ICO.folder(18)) || ''}</span><span>Rapports enregistrés (${liste.length})</span></button>
       <button class="menu-item" data-a="export"><span class="ico">${(ICO.package && ICO.package(18)) || ''}</span><span>Exporter la sauvegarde (JSON)</span></button>
       <button class="menu-item" data-a="import"><span class="ico">${(ICO.download && ICO.download(18)) || ''}</span><span>Importer une sauvegarde</span></button>
+      <button class="menu-item" data-a="recevoir-fiche"><span class="ico">${(ICO.mail && ICO.mail(18)) || ''}</span><span>Recevoir une fiche<small>Coller le lien d'une fiche d'intervention reçue par e-mail</small></span></button>
       <button class="menu-item" data-a="aide"><span class="ico">${(ICO.help && ICO.help(18)) || ''}</span><span>Mode d'emploi</span></button>
+      `}
       ${sauvegardeEnRetard() ? `<div class="sticky-note" style="margin-top:8px;border-color:#f59e0b;background:#fffbeb"><strong>Sauvegarde conseillée</strong> — ${joursDepuisSauvegarde() === null ? 'aucune sauvegarde exportée pour l\'instant' : 'dernière il y a ' + joursDepuisSauvegarde() + ' jours'}. Les rapports et photos ne sont que dans ce téléphone : « Exporter la sauvegarde » puis rangez le fichier (Drive, e-mail…).</div>` : ''}
-      <div class="sticky-note" style="margin-top:8px">${Store.ok ? 'Tout est conservé sur ce téléphone — rien n\'est envoyé sans votre accord.' : 'Stockage local indisponible : pensez à exporter votre travail.'}</div>
+      <div class="sticky-note" style="margin-top:8px">${Store.ok ? 'Tout est conservé sur cet appareil — rien n\'est envoyé sans votre accord.' : 'Stockage local indisponible : pensez à exporter votre travail.'}</div>
       <div style="text-align:center;font-size:11px;color:#64748b;margin:10px 0 4px 0;padding:6px;background:#f8fafc;border-radius:6px;border:1px solid #e2e8f0">Version active : <strong>${esc(ver)}</strong> (${esc(dateVer)})</div>
       <button class="btn grey wide" style="margin-top:10px" data-a="fermer">Fermer</button></div>`, (panneau) => {
       panneau.addEventListener('click', (e) => {
@@ -4455,6 +5233,9 @@
         else if (a === 'icones') feuilleIcones();
         else if (a === 'reglages') feuilleReglages();
         else if (a === 'actualiser') actualiserApp();
+        else if (a === 'recevoir-fiche') feuilleCollerFiche();
+        else if (a === 'nouveau' && RSAV) nouvelleFiche();
+        else if (a === 'historique' && RSAV) feuilleFichesPreparees();
         else if (a === 'nouveau') {
           Dialogue.confirmer('Créer une nouvelle intervention ? Le rapport en cours reste dans l\'historique.', { ok: 'Créer' }).then((oui) => {
             if (!oui) return;
@@ -4540,12 +5321,25 @@
                   }
                 }
 
+                /* Annuaire : fiches complétées sur le terrain (les plus récentes gagnent) et,
+                   si ce téléphone n'en a pas encore, la liste clients de la sauvegarde. */
+                let nbFiches = 0, nbClientsListe = 0;
+                if (d.annuaire && typeof d.annuaire === 'object') {
+                  nbFiches = Clients.fusionnerFiches(d.annuaire.fiches);
+                  if (Array.isArray(d.annuaire.liste) && d.annuaire.liste.length && !Clients.utiliseListeImportee()) {
+                    const liste = d.annuaire.liste.slice();
+                    if (Array.isArray(d.annuaire.techniciens)) liste.techniciens = d.annuaire.techniciens;
+                    nbClientsListe = await Clients.importer(liste);
+                  }
+                }
+
                 Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = Cache.cleTrad = '';
                 rendreTout();
-                const msg = nbPhotosTotal > 0
-                  ? `Sauvegarde importée (${nbImportes} intervention(s), ${nbPhotosTotal} photo(s) rétablie(s))`
-                  : `Sauvegarde importée (${nbImportes} intervention(s))`;
-                toast(msg, 3500);
+                const morceaux = [nbImportes + ' intervention(s)'];
+                if (nbPhotosTotal > 0) morceaux.push(nbPhotosTotal + ' photo(s) rétablie(s)');
+                if (nbClientsListe) morceaux.push(nbClientsListe + ' fiche(s) de la liste clients');
+                if (nbFiches) morceaux.push(nbFiches + ' fiche(s) d\'annuaire');
+                toast('Sauvegarde importée (' + morceaux.join(', ') + ')', 4000);
               } catch (err) {
                 console.error(err);
                 toast('Fichier invalide : impossible de lire la sauvegarde');
@@ -4709,7 +5503,10 @@
     document.addEventListener('input', (e) => {
       const t = e.target;
       if (t.closest && t.closest('.sheet, .assistant')) return;
-      if (t.dataset && t.dataset.k) { setPath(R, t.dataset.k, t.value); planifier(); }
+      if (t.dataset && t.dataset.k) {
+        setPath(R, t.dataset.k, t.value); planifier();
+        if (RSAV && /^envoi\./.test(t.dataset.k)) majManqueFiche();
+      }
     });
     document.addEventListener('change', (e) => {
       const t = e.target;
@@ -4766,9 +5563,38 @@
       else if (a === 'editer-trajet') feuilleTrajet(false);
       else if (a === 'cloturer-retour-reel') feuilleTrajet(true);
       else if (a === 'ajouter-ev') ajouterEvenement();
+      else if (a === 'ajouter-formation') ajouterEvenement('formation');
       else if (a === 'editer-client') feuilleClient();
       else if (a === 'sms-arrivee') feuilleSMSArrivee();
       else if (a === 'ajouter-piece') feuillePiece();
+      // fiche d'intervention : responsable SAV
+      else if (a === 'fiche-envoyer') envoyerFiche('mail');
+      else if (a === 'fiche-copier-lien') envoyerFiche('lien');
+      else if (a === 'fiche-copier-message') envoyerFiche('message');
+      else if (a === 'fiche-partager') envoyerFiche('partager');
+      else if (a === 'fiche-nouvelle') nouvelleFiche();
+      else if (a === 'fiche-destinataire') {
+        const d = destinatairesFiches()[+b.dataset.k];
+        if (d) { R.envoi.nom = d.nom; R.envoi.email = d.email; planifier(); rendreTout(); }
+      }
+      // fiche reçue : technicien
+      else if (a === 'fiche-voir') {
+        const x = Fiche.recues().find(y => y.fiche.id === b.dataset.id);
+        if (x) feuilleFicheRecue(x.fiche);
+      }
+      else if (a === 'fiche-ignorer') {
+        Dialogue.confirmer('Ignorer cette fiche ? Elle disparaît de l\'écran (le lien de l\'e-mail reste utilisable).', { ok: 'Ignorer' })
+          .then(oui => { if (oui) { Fiche.oublier(b.dataset.id); rendreTout(); } });
+      }
+      // pièce préparée par le SAV : laissée sur site ou rapportée
+      else if (a === 'piece-statut') {
+        const pc = (R.pieces || []).find(x => x.id === b.dataset.id);
+        if (pc) {
+          pc.statut = pc.statut === b.dataset.statut ? '' : b.dataset.statut;
+          Cache.pdf = Cache.docx = null; Cache.clePdf = Cache.cleDocx = '';
+          planifier(); rendreTout();
+        }
+      }
       else if (a === 'voir-photo-pc') {
         const id = b.dataset.id;
         const pc = (R.pieces || []).find(p => p.id === id);
@@ -4833,7 +5659,15 @@
   function feuilleAjusterChrono() {
     synchroniserEntites();
     const c = R.chrono;
-    const val = (iso) => iso ? new Date(iso).toISOString().slice(0, 16) : '';
+    /* Champ « date et heure » : il attend l'heure LOCALE. toISOString() donnait l'heure
+       UTC : le champ affichait 06:00 pour 08:00, et chaque « Enregistrer » décalait
+       le début et la fin de 1 à 2 heures. */
+    const val = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      return todayISO(d) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    };
     if (!Array.isArray(R.jours)) R.jours = [];
 
     function recalculerJour(j) {
@@ -5025,7 +5859,7 @@
       <p class="sub">Photos qui ne sont pas rattachées à un évènement (vue d'ensemble, plaque machine…).</p>
       <div class="photos">${(R.photosLibres || []).map((p, i) => `<div class="photo">
         <img src="${p.dataUrl}" alt=""><button class="rm" data-rm="${i}">${(ICO.close && ICO.close(14)) || '✕'}</button>
-        <input class="cap" value="${esc(p.legende || '')}" data-leg="${i}" placeholder="Légende"></div>`).join('') || '<p class="small">Aucune photo.</p>'}</div>
+        <input type="text" class="cap" value="${esc(p.legende || '')}" data-leg="${i}" placeholder="Légende"></div>`).join('') || '<p class="small">Aucune photo.</p>'}</div>
       <div class="filebtn" style="margin-top:10px"><input type="file" id="plInput" accept="image/*" capture="environment" multiple>
         <label for="plInput">${(ICO.camera && ICO.camera(16)) || ''} Ajouter des photos</label></div>
       <button class="btn grey wide" style="margin-top:10px" data-a="fermer">Fermer</button></div>`, (panneau) => {
@@ -5081,25 +5915,30 @@
     }
     const tr = R.trajet;
     const c = R.chrono || {};
-    const dateJour = R.date || todayISO();
-    const heureFinChrono = (c.fin ? Report.heureFr(c.fin) : '') || '';
+    /* Intervention sur plusieurs jours : l'aller a lieu le premier jour, le retour le
+       dernier (avant, le retour était proposé à la date du premier jour, sans heure). */
+    const jours = (R.multiJours && Array.isArray(R.jours)) ? R.jours.filter(j => j && j.date) : [];
+    const premierJour = jours[0], dernierJour = jours[jours.length - 1];
+    const dateJour = (premierJour && premierJour.date) || R.date || todayISO();
+    const dateRetour = (c.jourEnCours && c.debut) ? todayISO(new Date(c.debut)) : ((dernierJour && dernierJour.date) || dateJour);
+    const heureFinChrono = (c.fin ? Report.heureFr(c.fin) : '') || ((!c.jourEnCours && dernierJour && dernierJour.fin) || '');
 
     let allerDateDep = tr.allerDateDepart || dateJour;
     let allerHeureDep = tr.allerHeureDepart || '';
     let allerDateArr = tr.allerDateArrivee || dateJour;
-    let allerHeureArr = tr.allerHeureArrivee || (c.debut ? Report.heureFr(c.debut) : '');
+    let allerHeureArr = tr.allerHeureArrivee || (premierJour && premierJour.debut) || (c.debut ? Report.heureFr(c.debut) : '');
     let allerMin = Number(tr.allerDureeMinutes) || 0;
 
-    let retourDateDep = tr.retourDateDepart || dateJour;
+    let retourDateDep = tr.retourDateDepart || dateRetour;
     let retourHeureDep = tr.retourHeureDepart || heureFinChrono || '';
-    let retourDateArr = tr.retourDateArrivee || dateJour;
+    let retourDateArr = tr.retourDateArrivee || dateRetour;
     let retourHeureArr = tr.retourHeureArrivee || '';
     let retourMin = Number(tr.retourDureeMinutes) || allerMin || 0;
 
     let retourCloture = modeCloture ? true : !!tr.retourCloture;
-    let retourReelDateDep = tr.retourReelDateDepart || dateJour;
+    let retourReelDateDep = tr.retourReelDateDepart || dateRetour;
     let retourReelHeureDep = tr.retourReelHeureDepart || heureFinChrono || '';
-    let retourReelDateArr = tr.retourReelDateArrivee || dateJour;
+    let retourReelDateArr = tr.retourReelDateArrivee || dateRetour;
     let retourReelHeureArr = tr.retourReelHeureArrivee || '';
     let retourReelMin = Number(tr.retourReelDureeMinutes) || 0;
     let note = tr.note || '';
@@ -5440,8 +6279,19 @@
 
   /* ===================== Démarrage ==================================== */
   function demarrer() {
+    if (RSAV) {
+      // responsable SAV : ni chrono ni évènements, la barre du bas ajoute des pièces à emporter
+      document.body.classList.add('mode-rsav');
+      const lib = document.querySelector('#btnAjouterPiece .texte-long');
+      const libC = document.querySelector('#btnAjouterPiece .texte-court');
+      if (lib) lib.textContent = 'Ajouter une pièce à emporter';
+      if (libC) libC.textContent = 'Pièce à emporter';
+    }
     brancher();
     rendreTout();
+    // fiche d'intervention ouverte par un lien (au lancement, ou appli déjà ouverte)
+    recevoirFicheDepuisAdresse();
+    window.addEventListener('hashchange', () => { recevoirFicheDepuisAdresse(); });
     if (!Store.ok) setTimeout(() => toast('Mode aperçu : stockage local indisponible', 4000), 1200);
     /* Premier lancement : on demande ses coordonnées au technicien, mais sans interrompre
        une saisie déjà commencée (aucune autre feuille ouverte). */
@@ -5494,6 +6344,7 @@
 
   window.APP = {
     get rapport() { return R; }, get reglages() { return S; },
+    Fiche: Fiche, lienFiche: lienFiche,
     sauver: sauver, planifier: planifier,
     pdf: pdf, docx: docx, rendreTout: rendreTout, toast: toast,
     destinatairesMail: destinatairesMail, destinatairesSAV: destinatairesSAV, destinatairesClient: destinatairesClient, destinataires: destinataires,
